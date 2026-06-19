@@ -180,23 +180,23 @@ public class DraftFlow implements Callable<Integer> {
                 }
 
                 WorkspaceManager wm = new WorkspaceManager(cas, db);
+                DraftFlowConfig config = cas.getConfig();
+                com.draftflow.core.GitIgnoreMatcher ignoreMatcher = new com.draftflow.core.GitIgnoreMatcher(cas.getRootDir(), config.getExclude());
+
                 Set<Path> allFiles = new HashSet<>();
                 Files.walkFileTree(cas.getRootDir(), new SimpleFileVisitor<>() {
                     @Override
                     public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
-                        if (dir.getFileName() != null) {
-                            String name = dir.getFileName().toString();
-                            if (name.equals(".draftflow") || name.equals(".git") || name.equals(".gradle")
-                                    || name.equals("build") || name.equals("bin")
-                                    || name.equals(".idea") || name.equals(".vscode")) {
-                                return FileVisitResult.SKIP_SUBTREE;
-                            }
+                        if (ignoreMatcher.isIgnored(dir)) {
+                            return FileVisitResult.SKIP_SUBTREE;
                         }
                         return FileVisitResult.CONTINUE;
                     }
                     @Override
                     public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                        allFiles.add(file);
+                        if (!ignoreMatcher.isIgnored(file)) {
+                            allFiles.add(file);
+                        }
                         return FileVisitResult.CONTINUE;
                     }
                 });

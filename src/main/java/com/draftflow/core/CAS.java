@@ -50,7 +50,16 @@ public class CAS {
 
         Files.createDirectories(objectPath.getParent());
         byte[] compressed = Compressor.compress(serializedWithHeader);
-        Files.write(objectPath, compressed, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+        
+        // Atomic write via temp file and atomic rename
+        String fileName = objectPath.getFileName().toString();
+        Path tempPath = objectPath.resolveSibling(fileName + ".tmp_" + java.util.UUID.randomUUID());
+        Files.write(tempPath, compressed, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+        try {
+            Files.move(tempPath, objectPath, java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            Files.move(tempPath, objectPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        }
         
         return hash;
     }
@@ -67,6 +76,12 @@ public class CAS {
             decompressed = Compressor.decompress(compressed);
         } catch (Exception e) {
             throw new IOException("Decompression failed for: " + hash, e);
+        }
+
+        // SHA-256 post-read integrity check
+        String recalculated = Hasher.hash(decompressed);
+        if (!recalculated.equals(hash)) {
+            throw new IOException("CAS data corruption detected: expected hash " + hash + " but calculated " + recalculated);
         }
 
         // Parse header: "[type] [size]\0[payload]"

@@ -21,6 +21,28 @@ public class RemoteClient {
         this.httpClient = HttpClient.newBuilder().build();
     }
 
+    @FunctionalInterface
+    private interface NetworkCall<T> {
+        T execute() throws IOException, InterruptedException;
+    }
+
+    private <T> T executeWithRetry(NetworkCall<T> call) throws IOException, InterruptedException {
+        int maxRetries = 3;
+        int delay = 100; // ms
+        for (int attempt = 0; attempt <= maxRetries; attempt++) {
+            try {
+                return call.execute();
+            } catch (IOException e) {
+                if (attempt == maxRetries) {
+                    throw e;
+                }
+                Thread.sleep(delay);
+                delay *= 2; // Exponential backoff
+            }
+        }
+        throw new IOException("Unexpected exhaustion of retries");
+    }
+
     public String getRef(String refName) throws IOException, InterruptedException {
         if (remoteUrl.startsWith("file://")) {
             Path refPath = getLocalPath("refs/" + refName);
@@ -29,16 +51,18 @@ public class RemoteClient {
             }
             return Files.readString(refPath).trim();
         } else {
-            URI uri = URI.create(remoteUrl + "refs/" + refName);
-            HttpRequest request = HttpRequest.newBuilder().uri(uri).GET().build();
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() == 404) {
-                return null;
-            }
-            if (response.statusCode() != 200) {
-                throw new IOException("Failed to get remote ref: HTTP " + response.statusCode());
-            }
-            return response.body().trim();
+            return executeWithRetry(() -> {
+                URI uri = URI.create(remoteUrl + "refs/" + refName);
+                HttpRequest request = HttpRequest.newBuilder().uri(uri).GET().build();
+                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+                if (response.statusCode() == 404) {
+                    return null;
+                }
+                if (response.statusCode() != 200) {
+                    throw new IOException("Failed to get remote ref: HTTP " + response.statusCode());
+                }
+                return response.body().trim();
+            });
         }
     }
 
@@ -48,15 +72,18 @@ public class RemoteClient {
             Files.createDirectories(refPath.getParent());
             Files.writeString(refPath, revisionHash);
         } else {
-            URI uri = URI.create(remoteUrl + "refs/" + refName);
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(uri)
-                    .PUT(HttpRequest.BodyPublishers.ofString(revisionHash))
-                    .build();
-            HttpResponse<Void> response = httpClient.send(request, HttpResponse.BodyHandlers.discarding());
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw new IOException("Failed to update remote ref: HTTP " + response.statusCode());
-            }
+            executeWithRetry(() -> {
+                URI uri = URI.create(remoteUrl + "refs/" + refName);
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(uri)
+                        .PUT(HttpRequest.BodyPublishers.ofString(revisionHash))
+                        .build();
+                HttpResponse<Void> response = httpClient.send(request, HttpResponse.BodyHandlers.discarding());
+                if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                    throw new IOException("Failed to update remote ref: HTTP " + response.statusCode());
+                }
+                return null;
+            });
         }
     }
 
@@ -66,15 +93,18 @@ public class RemoteClient {
             Files.createDirectories(packPath.getParent());
             Files.write(packPath, packData);
         } else {
-            URI uri = URI.create(remoteUrl + "packs/" + packId + ".dfpack");
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(uri)
-                    .PUT(HttpRequest.BodyPublishers.ofByteArray(packData))
-                    .build();
-            HttpResponse<Void> response = httpClient.send(request, HttpResponse.BodyHandlers.discarding());
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw new IOException("Failed to upload pack: HTTP " + response.statusCode());
-            }
+            executeWithRetry(() -> {
+                URI uri = URI.create(remoteUrl + "packs/" + packId + ".dfpack");
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(uri)
+                        .PUT(HttpRequest.BodyPublishers.ofByteArray(packData))
+                        .build();
+                HttpResponse<Void> response = httpClient.send(request, HttpResponse.BodyHandlers.discarding());
+                if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                    throw new IOException("Failed to upload pack: HTTP " + response.statusCode());
+                }
+                return null;
+            });
         }
     }
 
@@ -86,13 +116,15 @@ public class RemoteClient {
             }
             return Files.readAllBytes(packPath);
         } else {
-            URI uri = URI.create(remoteUrl + "packs/" + packId + ".dfpack");
-            HttpRequest request = HttpRequest.newBuilder().uri(uri).GET().build();
-            HttpResponse<byte[]> response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
-            if (response.statusCode() != 200) {
-                throw new IOException("Failed to download remote pack: HTTP " + response.statusCode());
-            }
-            return response.body();
+            return executeWithRetry(() -> {
+                URI uri = URI.create(remoteUrl + "packs/" + packId + ".dfpack");
+                HttpRequest request = HttpRequest.newBuilder().uri(uri).GET().build();
+                HttpResponse<byte[]> response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
+                if (response.statusCode() != 200) {
+                    throw new IOException("Failed to download remote pack: HTTP " + response.statusCode());
+                }
+                return response.body();
+            });
         }
     }
 
@@ -108,15 +140,18 @@ public class RemoteClient {
             Files.createDirectories(indexPath.getParent());
             Files.writeString(indexPath, content);
         } else {
-            URI uri = URI.create(remoteUrl + "pack.index");
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(uri)
-                    .PUT(HttpRequest.BodyPublishers.ofString(content))
-                    .build();
-            HttpResponse<Void> response = httpClient.send(request, HttpResponse.BodyHandlers.discarding());
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw new IOException("Failed to upload index: HTTP " + response.statusCode());
-            }
+            executeWithRetry(() -> {
+                URI uri = URI.create(remoteUrl + "pack.index");
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(uri)
+                        .PUT(HttpRequest.BodyPublishers.ofString(content))
+                        .build();
+                HttpResponse<Void> response = httpClient.send(request, HttpResponse.BodyHandlers.discarding());
+                if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                    throw new IOException("Failed to upload index: HTTP " + response.statusCode());
+                }
+                return null;
+            });
         }
     }
 
@@ -131,16 +166,21 @@ public class RemoteClient {
             }
             content = Files.readString(indexPath);
         } else {
-            URI uri = URI.create(remoteUrl + "pack.index");
-            HttpRequest request = HttpRequest.newBuilder().uri(uri).GET().build();
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() == 404) {
+            content = executeWithRetry(() -> {
+                URI uri = URI.create(remoteUrl + "pack.index");
+                HttpRequest request = HttpRequest.newBuilder().uri(uri).GET().build();
+                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+                if (response.statusCode() == 404) {
+                    return "";
+                }
+                if (response.statusCode() != 200) {
+                    throw new IOException("Failed to download index: HTTP " + response.statusCode());
+                }
+                return response.body();
+            });
+            if (content.isEmpty()) {
                 return map;
             }
-            if (response.statusCode() != 200) {
-                throw new IOException("Failed to download index: HTTP " + response.statusCode());
-            }
-            content = response.body();
         }
 
         for (String line : content.split("\n")) {

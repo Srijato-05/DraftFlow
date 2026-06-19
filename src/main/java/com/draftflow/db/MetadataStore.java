@@ -18,21 +18,51 @@ public class MetadataStore implements AutoCloseable {
     private MVMap<String, String> changeHistoryMap;
     private MVMap<String, String> configMap;
 
+    private Thread shutdownHook;
+
     public MetadataStore(Path dbFilePath) {
         this.dbFilePath = dbFilePath;
     }
 
     public void open() throws IOException {
         Files.createDirectories(dbFilePath.getParent());
-        this.store = new MVStore.Builder()
-                .fileName(dbFilePath.toString())
-                .open();
+        try {
+            this.store = new MVStore.Builder()
+                    .fileName(dbFilePath.toString())
+                    .open();
+        } catch (Exception e) {
+            // MVStore corruption recovery: backup corrupt db and recreate a clean one
+            Path backupPath = dbFilePath.resolveSibling(dbFilePath.getFileName().toString() + ".corrupted_" + System.currentTimeMillis());
+            try {
+                if (Files.exists(dbFilePath)) {
+                    Files.move(dbFilePath, backupPath);
+                }
+            } catch (IOException ie) {
+                Files.deleteIfExists(dbFilePath);
+            }
+            this.store = new MVStore.Builder()
+                    .fileName(dbFilePath.toString())
+                    .open();
+        }
         
         this.indexMap = this.store.openMap("index");
         this.refMap = this.store.openMap("refs");
         this.changeMap = this.store.openMap("changes");
         this.changeHistoryMap = this.store.openMap("changeHistory");
         this.configMap = this.store.openMap("config");
+
+        // Graceful VM shutdown hook to commit and close MVStore
+        this.shutdownHook = new Thread(() -> {
+            try {
+                if (store != null && !store.isClosed()) {
+                    store.commit();
+                    store.close();
+                }
+            } catch (Exception ex) {
+                // Ignore during shutdown
+            }
+        });
+        Runtime.getRuntime().addShutdownHook(shutdownHook);
     }
 
     public synchronized void commit() {
@@ -43,7 +73,16 @@ public class MetadataStore implements AutoCloseable {
 
     @Override
     public synchronized void close() {
+        if (shutdownHook != null) {
+            try {
+                Runtime.getRuntime().removeShutdownHook(shutdownHook);
+            } catch (Exception e) {
+                // Ignore if shutdown is already in progress
+            }
+            shutdownHook = null;
+        }
         if (store != null && !store.isClosed()) {
+            store.commit();
             store.close();
         }
     }

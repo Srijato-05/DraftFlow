@@ -24,9 +24,14 @@ public class WorkspaceManager {
      */
     public synchronized String scanAndCreateShadowCommit(Set<Path> changedPaths) throws IOException {
         Path rootDir = cas.getRootDir();
+        DraftFlowConfig config = cas.getConfig();
+        GitIgnoreMatcher ignoreMatcher = new GitIgnoreMatcher(rootDir, config.getExclude());
 
         // 1. Process changed files and update the index database
         for (Path path : changedPaths) {
+            if (ignoreMatcher.isIgnored(path)) {
+                continue;
+            }
             Path relativePath = rootDir.relativize(path);
             String relStr = relativePath.toString().replace('\\', '/');
 
@@ -131,31 +136,65 @@ public class WorkspaceManager {
      * Checks out the target revision, cleaning untracked files and materializing objects to disk.
      */
     public synchronized void restoreWorkingCopy(String targetRevisionHash) throws IOException {
-        Revision rev = (Revision) cas.readObject(targetRevisionHash);
-        String rootTreeHash = rev.getTreeHash();
+        restoreWorkingCopyInternal(targetRevisionHash, true);
+    }
 
+    private synchronized void restoreWorkingCopyInternal(String targetRevisionHash, boolean allowRollback) throws IOException {
+        String previousRevisionHash = db.getConfig("activeRevisionHash");
+        List<FileMetadata> previousFiles = db.getAllFiles();
+
+        Revision rev;
+        try {
+            rev = (Revision) cas.readObject(targetRevisionHash);
+        } catch (IOException e) {
+            throw new IOException("Failed to read revision " + targetRevisionHash + " from CAS", e);
+        }
+
+        String rootTreeHash = rev.getTreeHash();
         Path rootDir = cas.getRootDir();
 
         // 1. Clean current tracked files from working copy
-        for (FileMetadata file : db.getAllFiles()) {
+        for (FileMetadata file : previousFiles) {
             Path p = rootDir.resolve(file.getPath());
-            Files.deleteIfExists(p);
+            try {
+                Files.deleteIfExists(p);
+            } catch (IOException e) {
+                // Ignore delete errors to keep restoration moving forward
+            }
         }
         db.clearIndex();
 
-        // 2. Materialize tree recursively
-        materializeTree("", rootTreeHash);
+        try {
+            // 2. Materialize tree recursively
+            materializeTree("", rootTreeHash);
 
-        // 3. Update active config
-        db.setConfig("activeRevisionHash", targetRevisionHash);
-        db.setConfig("activeChangeId", rev.getChangeId());
-        
-        String activeHead = db.getConfig("activeHead");
-        if (activeHead != null) {
-            db.setRef(activeHead, targetRevisionHash);
+            // 3. Update active config
+            db.setConfig("activeRevisionHash", targetRevisionHash);
+            db.setConfig("activeChangeId", rev.getChangeId());
+            
+            String activeHead = db.getConfig("activeHead");
+            if (activeHead != null) {
+                db.setRef(activeHead, targetRevisionHash);
+            }
+
+            db.commit();
+        } catch (Exception e) {
+            if (allowRollback && previousRevisionHash != null && !previousRevisionHash.equals(targetRevisionHash)) {
+                try {
+                    restoreWorkingCopyInternal(previousRevisionHash, false);
+                } catch (Exception rollbackException) {
+                    db.clearIndex();
+                    db.commit();
+                    throw new IOException("Critical: Restore failed for " + targetRevisionHash + 
+                            " and rollback failed for " + previousRevisionHash + ". Workspace may be in an inconsistent state.", e);
+                }
+                throw new IOException("Restore failed for " + targetRevisionHash + ". Successfully rolled back to previous revision " + previousRevisionHash, e);
+            } else {
+                db.clearIndex();
+                db.commit();
+                throw new IOException("Restore failed for " + targetRevisionHash + ". No rollback possible.", e);
+            }
         }
-
-        db.commit();
     }
 
     private void materializeTree(String currentPath, String treeHash) throws IOException {

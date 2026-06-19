@@ -1,6 +1,7 @@
 package com.draftflow.watcher;
 
 import com.draftflow.core.DraftFlowConfig;
+import com.draftflow.core.GitIgnoreMatcher;
 
 import java.io.IOException;
 import java.nio.file.*;
@@ -14,7 +15,6 @@ public class FSWatcher {
     }
 
     private final Path rootDir;
-    private final DraftFlowConfig config;
     private final WatcherListener listener;
     private final WatchService watchService;
     private final Map<WatchKey, Path> watchKeys = new ConcurrentHashMap<>();
@@ -28,12 +28,13 @@ public class FSWatcher {
     private ScheduledFuture<?> debounceTask;
     private Thread watcherThread;
     private volatile boolean running = false;
+    private final GitIgnoreMatcher ignoreMatcher;
 
     public FSWatcher(Path rootDir, DraftFlowConfig config, WatcherListener listener) throws IOException {
         this.rootDir = rootDir;
-        this.config = config;
         this.listener = listener;
         this.watchService = FileSystems.getDefault().newWatchService();
+        this.ignoreMatcher = new GitIgnoreMatcher(rootDir, config.getExclude());
     }
 
     public void start() throws IOException {
@@ -88,22 +89,7 @@ public class FSWatcher {
     }
 
     private boolean isExcluded(Path path) {
-        Path relative = rootDir.relativize(path);
-        String relStr = relative.toString().replace('\\', '/');
-        
-        if (relStr.isEmpty()) {
-            return false;
-        }
-
-        for (String pattern : config.getExclude()) {
-            // Check if any path segment matches the exclusion pattern
-            for (Path segment : relative) {
-                if (segment.toString().equals(pattern)) {
-                    return true;
-                }
-            }
-        }
-        return false;
+        return ignoreMatcher.isIgnored(path);
     }
 
     private void watchLoop() {
