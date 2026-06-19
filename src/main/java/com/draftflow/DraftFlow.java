@@ -36,7 +36,8 @@ import java.util.concurrent.Callable;
                 DraftFlow.HistoryCmd.class,
                 DraftFlow.BranchCmd.class,
                 DraftFlow.UndoCmd.class,
-                DraftFlow.DashboardCmd.class
+                DraftFlow.DashboardCmd.class,
+                DraftFlow.FsckCmd.class
         })
 public class DraftFlow implements Callable<Integer> {
 
@@ -51,7 +52,39 @@ public class DraftFlow implements Callable<Integer> {
     }
 
     public static void main(String[] args) {
-        int exitCode = new CommandLine(new DraftFlow()).execute(args);
+        CommandLine cmd = new CommandLine(new DraftFlow());
+        cmd.setExecutionExceptionHandler((ex, commandLine, parseResult) -> {
+            System.err.println("================================================================================");
+            System.err.println("                     DRAFTFLOW VCS CRITICAL EXCEPTION");
+            System.err.println("================================================================================");
+            System.err.println("Operation failed due to an unexpected error.");
+            System.err.println("Error Type: " + ex.getClass().getName());
+            System.err.println("Message:    " + ex.getMessage());
+            System.err.println();
+            System.err.println("Diagnostics & Troubleshooting Tips:");
+            if (ex instanceof java.io.FileNotFoundException || ex.getMessage().contains("Access is denied") || ex.getMessage().contains("Permission")) {
+                System.err.println("  -> Permissions Issue: Please verify that you have read/write access to the repository directory.");
+            } else if (ex.getMessage().contains("lock") || ex.getMessage().contains("Lock")) {
+                System.err.println("  -> Lock Contention: Another process may be running a DraftFlow operation. Please wait for it to complete.");
+            } else if (ex.getMessage().contains("corrupted") || ex.getMessage().contains("corruption")) {
+                System.err.println("  -> Data Corruption: A stored object failed checksum verification. Run 'draftflow fsck' to verify and heal.");
+            } else {
+                System.err.println("  -> System State: Ensure you have enough disk space and that no other application is locking the database files.");
+            }
+            System.err.println();
+            System.err.println("System Information:");
+            System.err.println("  OS:           " + System.getProperty("os.name") + " (" + System.getProperty("os.version") + ")");
+            System.err.println("  Java Version: " + System.getProperty("java.version"));
+            System.err.println("================================================================================");
+            
+            if ("true".equalsIgnoreCase(System.getenv("DRAFTFLOW_DEBUG"))) {
+                ex.printStackTrace();
+            } else {
+                System.err.println("To see the full stack trace, set the environment variable DRAFTFLOW_DEBUG=true");
+            }
+            return 1;
+        });
+        int exitCode = cmd.execute(args);
         System.exit(exitCode);
     }
 
@@ -167,84 +200,86 @@ public class DraftFlow implements Callable<Integer> {
                 System.err.println("Fatal: Not a draftflow repository.");
                 return 1;
             }
-            Path dbPath = cas.getDraftFlowDir().resolve("index").resolve("index.mv.db");
-            try (MetadataStore db = new MetadataStore(dbPath)) {
-                db.open();
+            return runLockedCommand(cas, () -> {
+                Path dbPath = cas.getDraftFlowDir().resolve("index").resolve("index.mv.db");
+                try (MetadataStore db = new MetadataStore(dbPath)) {
+                    db.open();
 
-                List<FileMetadata> allTracked = db.getAllFiles();
-                for (FileMetadata f : allTracked) {
-                    if (f.getType().equals(ObjectType.CONFLICT.name())) {
-                        System.err.println("Fatal: Cannot save with unresolved conflicts (" + f.getPath() + "). Run 'draftflow resolve' first.");
-                        return 1;
-                    }
-                }
-
-                WorkspaceManager wm = new WorkspaceManager(cas, db);
-                DraftFlowConfig config = cas.getConfig();
-                com.draftflow.core.GitIgnoreMatcher ignoreMatcher = new com.draftflow.core.GitIgnoreMatcher(cas.getRootDir(), config.getExclude());
-
-                Set<Path> allFiles = new HashSet<>();
-                Files.walkFileTree(cas.getRootDir(), new SimpleFileVisitor<>() {
-                    @Override
-                    public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
-                        if (ignoreMatcher.isIgnored(dir)) {
-                            return FileVisitResult.SKIP_SUBTREE;
+                    List<FileMetadata> allTracked = db.getAllFiles();
+                    for (FileMetadata f : allTracked) {
+                        if (f.getType().equals(ObjectType.CONFLICT.name())) {
+                            System.err.println("Fatal: Cannot save with unresolved conflicts (" + f.getPath() + "). Run 'draftflow resolve' first.");
+                            return 1;
                         }
-                        return FileVisitResult.CONTINUE;
                     }
-                    @Override
-                    public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                        if (!ignoreMatcher.isIgnored(file)) {
-                            allFiles.add(file);
+
+                    WorkspaceManager wm = new WorkspaceManager(cas, db);
+                    DraftFlowConfig config = cas.getConfig();
+                    com.draftflow.core.GitIgnoreMatcher ignoreMatcher = new com.draftflow.core.GitIgnoreMatcher(cas.getRootDir(), config.getExclude());
+
+                    Set<Path> allFiles = new HashSet<>();
+                    Files.walkFileTree(cas.getRootDir(), new SimpleFileVisitor<>() {
+                        @Override
+                        public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
+                            if (ignoreMatcher.isIgnored(dir)) {
+                                return FileVisitResult.SKIP_SUBTREE;
+                            }
+                            return FileVisitResult.CONTINUE;
                         }
-                        return FileVisitResult.CONTINUE;
+                        @Override
+                        public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                            if (!ignoreMatcher.isIgnored(file)) {
+                                allFiles.add(file);
+                            }
+                            return FileVisitResult.CONTINUE;
+                        }
+                    });
+
+                    for (FileMetadata meta : db.getAllFiles()) {
+                        allFiles.add(cas.getRootDir().resolve(meta.getPath()));
                     }
-                });
 
-                for (FileMetadata meta : db.getAllFiles()) {
-                    allFiles.add(cas.getRootDir().resolve(meta.getPath()));
+                    String latestRevHash = wm.scanAndCreateShadowCommit(allFiles);
+                    Revision draft = (Revision) cas.readObject(latestRevHash);
+
+                    Revision permanent = new Revision(
+                            draft.getTreeHash(),
+                            draft.getParentHashes(),
+                            draft.getChangeId(),
+                            System.getProperty("user.name"),
+                            System.currentTimeMillis(),
+                            message,
+                            false
+                    );
+
+                    String permanentHash = cas.writeObject(permanent);
+                    String activeHead = db.getConfig("activeHead");
+                    if (activeHead != null) {
+                        db.setRef(activeHead, permanentHash);
+                    }
+                    db.setConfig("activeRevisionHash", permanentHash);
+                    db.setChangeRevision(draft.getChangeId(), permanentHash);
+
+                    Revision newDraft = new Revision(
+                            draft.getTreeHash(),
+                            Collections.singletonList(permanentHash),
+                            draft.getChangeId(),
+                            System.getProperty("user.name"),
+                            System.currentTimeMillis(),
+                            "shadow-revision (WIP)",
+                            true
+                    );
+                    String newDraftHash = cas.writeObject(newDraft);
+                    if (activeHead != null) {
+                        db.setRef(activeHead, newDraftHash);
+                    }
+                    db.setConfig("activeRevisionHash", newDraftHash);
+                    db.commit();
+
+                    System.out.println("Saved change " + draft.getChangeId().substring(0, 8) + " as revision: " + permanentHash.substring(0, 8));
                 }
-
-                String latestRevHash = wm.scanAndCreateShadowCommit(allFiles);
-                Revision draft = (Revision) cas.readObject(latestRevHash);
-
-                Revision permanent = new Revision(
-                        draft.getTreeHash(),
-                        draft.getParentHashes(),
-                        draft.getChangeId(),
-                        System.getProperty("user.name"),
-                        System.currentTimeMillis(),
-                        message,
-                        false
-                );
-
-                String permanentHash = cas.writeObject(permanent);
-                String activeHead = db.getConfig("activeHead");
-                if (activeHead != null) {
-                    db.setRef(activeHead, permanentHash);
-                }
-                db.setConfig("activeRevisionHash", permanentHash);
-                db.setChangeRevision(draft.getChangeId(), permanentHash);
-
-                Revision newDraft = new Revision(
-                        draft.getTreeHash(),
-                        Collections.singletonList(permanentHash),
-                        draft.getChangeId(),
-                        System.getProperty("user.name"),
-                        System.currentTimeMillis(),
-                        "shadow-revision (WIP)",
-                        true
-                );
-                String newDraftHash = cas.writeObject(newDraft);
-                if (activeHead != null) {
-                    db.setRef(activeHead, newDraftHash);
-                }
-                db.setConfig("activeRevisionHash", newDraftHash);
-                db.commit();
-
-                System.out.println("Saved change " + draft.getChangeId().substring(0, 8) + " as revision: " + permanentHash.substring(0, 8));
-            }
-            return 0;
+                return 0;
+            });
         }
     }
 
@@ -261,21 +296,23 @@ public class DraftFlow implements Callable<Integer> {
                 System.err.println("Fatal: Not a draftflow repository.");
                 return 1;
             }
-            Path dbPath = cas.getDraftFlowDir().resolve("index").resolve("index.mv.db");
-            try (MetadataStore db = new MetadataStore(dbPath)) {
-                db.open();
-                WorkspaceManager wm = new WorkspaceManager(cas, db);
+            return runLockedCommand(cas, () -> {
+                Path dbPath = cas.getDraftFlowDir().resolve("index").resolve("index.mv.db");
+                try (MetadataStore db = new MetadataStore(dbPath)) {
+                    db.open();
+                    WorkspaceManager wm = new WorkspaceManager(cas, db);
 
-                String fullHash = cas.resolveHash(revisionHash);
-                if (fullHash == null) {
-                    System.err.println("Error: Revision not found: " + revisionHash);
-                    return 1;
+                    String fullHash = cas.resolveHash(revisionHash);
+                    if (fullHash == null) {
+                        System.err.println("Error: Revision not found: " + revisionHash);
+                        return 1;
+                    }
+
+                    wm.restoreWorkingCopy(fullHash);
+                    System.out.println("Switched to revision: " + fullHash.substring(0, 8));
                 }
-
-                wm.restoreWorkingCopy(fullHash);
-                System.out.println("Switched to revision: " + fullHash.substring(0, 8));
-            }
-            return 0;
+                return 0;
+            });
         }
     }
 
@@ -292,62 +329,64 @@ public class DraftFlow implements Callable<Integer> {
                 System.err.println("Fatal: Not a draftflow repository.");
                 return 1;
             }
-            Path dbPath = cas.getDraftFlowDir().resolve("index").resolve("index.mv.db");
-            try (MetadataStore db = new MetadataStore(dbPath)) {
-                db.open();
+            return runLockedCommand(cas, () -> {
+                Path dbPath = cas.getDraftFlowDir().resolve("index").resolve("index.mv.db");
+                try (MetadataStore db = new MetadataStore(dbPath)) {
+                    db.open();
 
-                String oursHash = db.getConfig("activeRevisionHash");
-                if (oursHash == null) {
-                    System.err.println("Error: No active revision on current branch.");
-                    return 1;
-                }
+                    String oursHash = db.getConfig("activeRevisionHash");
+                    if (oursHash == null) {
+                        System.err.println("Error: No active revision on current branch.");
+                        return 1;
+                    }
 
-                String theirsHash = cas.resolveHash(target);
-                if (theirsHash == null) {
-                    theirsHash = db.getRef("heads/" + target);
+                    String theirsHash = cas.resolveHash(target);
                     if (theirsHash == null) {
-                        theirsHash = db.getRef(target);
+                        theirsHash = db.getRef("heads/" + target);
+                        if (theirsHash == null) {
+                            theirsHash = db.getRef(target);
+                        }
+                    }
+
+                    if (theirsHash == null) {
+                        System.err.println("Error: Could not resolve target: " + target);
+                        return 1;
+                    }
+
+                    System.out.println("Merging " + theirsHash.substring(0, 8) + " into current revision " + oursHash.substring(0, 8) + "...");
+                    
+                    MergeEngine.MergeResult result = MergeEngine.mergeRevisions(oursHash, theirsHash, cas);
+
+                    List<String> parents = Arrays.asList(oursHash, theirsHash);
+                    String activeChangeId = db.getConfig("activeChangeId");
+
+                    Revision mergedDraft = new Revision(
+                            result.treeHash,
+                            parents,
+                            activeChangeId,
+                            System.getProperty("user.name"),
+                            System.currentTimeMillis(),
+                            "Merge commit draft",
+                            true
+                    );
+                    String mergedDraftHash = cas.writeObject(mergedDraft);
+
+                    WorkspaceManager wm = new WorkspaceManager(cas, db);
+                    wm.restoreWorkingCopy(mergedDraftHash);
+
+                    if (result.clean) {
+                        System.out.println("Merge successful! Clean merged state checked out.");
+                    } else {
+                        System.out.println("Merge finished with CONFLICTS!");
+                        System.out.println("Conflicted files:");
+                        for (String f : result.conflicts) {
+                            System.out.println("  (conflict)  " + f);
+                        }
+                        System.out.println("Run 'draftflow resolve' to resolve conflicts interactively.");
                     }
                 }
-
-                if (theirsHash == null) {
-                    System.err.println("Error: Could not resolve target: " + target);
-                    return 1;
-                }
-
-                System.out.println("Merging " + theirsHash.substring(0, 8) + " into current revision " + oursHash.substring(0, 8) + "...");
-                
-                MergeEngine.MergeResult result = MergeEngine.mergeRevisions(oursHash, theirsHash, cas);
-
-                List<String> parents = Arrays.asList(oursHash, theirsHash);
-                String activeChangeId = db.getConfig("activeChangeId");
-
-                Revision mergedDraft = new Revision(
-                        result.treeHash,
-                        parents,
-                        activeChangeId,
-                        System.getProperty("user.name"),
-                        System.currentTimeMillis(),
-                        "Merge commit draft",
-                        true
-                );
-                String mergedDraftHash = cas.writeObject(mergedDraft);
-
-                WorkspaceManager wm = new WorkspaceManager(cas, db);
-                wm.restoreWorkingCopy(mergedDraftHash);
-
-                if (result.clean) {
-                    System.out.println("Merge successful! Clean merged state checked out.");
-                } else {
-                    System.out.println("Merge finished with CONFLICTS!");
-                    System.out.println("Conflicted files:");
-                    for (String f : result.conflicts) {
-                        System.out.println("  (conflict)  " + f);
-                    }
-                    System.out.println("Run 'draftflow resolve' to resolve conflicts interactively.");
-                }
-            }
-            return 0;
+                return 0;
+            });
         }
     }
 
@@ -362,123 +401,125 @@ public class DraftFlow implements Callable<Integer> {
                 System.err.println("Fatal: Not a draftflow repository.");
                 return 1;
             }
-            Path dbPath = cas.getDraftFlowDir().resolve("index").resolve("index.mv.db");
-            try (MetadataStore db = new MetadataStore(dbPath)) {
-                db.open();
+            return runLockedCommand(cas, () -> {
+                Path dbPath = cas.getDraftFlowDir().resolve("index").resolve("index.mv.db");
+                try (MetadataStore db = new MetadataStore(dbPath)) {
+                    db.open();
 
-                List<FileMetadata> allFiles = db.getAllFiles();
-                List<FileMetadata> conflicts = new ArrayList<>();
-                for (FileMetadata f : allFiles) {
-                    if (f.getType().equals(ObjectType.CONFLICT.name())) {
-                        conflicts.add(f);
+                    List<FileMetadata> allFiles = db.getAllFiles();
+                    List<FileMetadata> conflicts = new ArrayList<>();
+                    for (FileMetadata f : allFiles) {
+                        if (f.getType().equals(ObjectType.CONFLICT.name())) {
+                            conflicts.add(f);
+                        }
                     }
-                }
 
-                if (conflicts.isEmpty()) {
-                    System.out.println("No unresolved conflicts.");
-                    return 0;
-                }
+                    if (conflicts.isEmpty()) {
+                        System.out.println("No unresolved conflicts.");
+                        return 0;
+                    }
 
-                Scanner scanner = new Scanner(System.in);
-                WorkspaceManager wm = new WorkspaceManager(cas, db);
+                    Scanner scanner = new Scanner(System.in);
+                    WorkspaceManager wm = new WorkspaceManager(cas, db);
 
-                System.out.println("Found " + conflicts.size() + " unresolved conflict(s).");
-                for (FileMetadata f : conflicts) {
-                    System.out.println("\n----------------------------------------");
-                    System.out.println("Conflicting file: " + f.getPath());
+                    System.out.println("Found " + conflicts.size() + " unresolved conflict(s).");
+                    for (FileMetadata f : conflicts) {
+                        System.out.println("\n----------------------------------------");
+                        System.out.println("Conflicting file: " + f.getPath());
 
-                    ConflictNode node = (ConflictNode) cas.readObject(f.getHash());
+                        ConflictNode node = (ConflictNode) cas.readObject(f.getHash());
 
-                    System.out.println("Select resolution action:");
-                    System.out.println("  1. Keep OURS (Left) version");
-                    System.out.println("  2. Keep THEIRS (Right) version");
-                    System.out.println("  3. Resolve manually (Verify file no longer has markers on disk)");
-                    System.out.print("Enter choice [1-3]: ");
+                        System.out.println("Select resolution action:");
+                        System.out.println("  1. Keep OURS (Left) version");
+                        System.out.println("  2. Keep THEIRS (Right) version");
+                        System.out.println("  3. Resolve manually (Verify file no longer has markers on disk)");
+                        System.out.print("Enter choice [1-3]: ");
 
-                    String choice = scanner.nextLine().trim();
-                    if (choice.equals("1")) {
-                        if (node.getLeftHash() == null) {
-                            db.removeFile(f.getPath());
-                            Files.deleteIfExists(cas.getRootDir().resolve(f.getPath()));
-                            System.out.println("Resolved " + f.getPath() + " by deleting it (Ours).");
-                        } else {
-                            Blob blob = (Blob) cas.readObject(node.getLeftHash());
-                            Path path = cas.getRootDir().resolve(f.getPath());
-                            Files.write(path, blob.getContent());
-                            long size = Files.size(path);
-                            long lastMod = Files.getLastModifiedTime(path).toMillis();
-                            FileMetadata resolved = new FileMetadata(f.getPath(), size, lastMod, node.getLeftHash(), ObjectType.BLOB.name(), f.getMode());
-                            db.putFile(resolved);
-                            System.out.println("Resolved " + f.getPath() + " using OURS version.");
-                        }
-                    } else if (choice.equals("2")) {
-                        if (node.getRightHash() == null) {
-                            db.removeFile(f.getPath());
-                            Files.deleteIfExists(cas.getRootDir().resolve(f.getPath()));
-                            System.out.println("Resolved " + f.getPath() + " by deleting it (Theirs).");
-                        } else {
-                            Blob blob = (Blob) cas.readObject(node.getRightHash());
-                            Path path = cas.getRootDir().resolve(f.getPath());
-                            Files.write(path, blob.getContent());
-                            long size = Files.size(path);
-                            long lastMod = Files.getLastModifiedTime(path).toMillis();
-                            FileMetadata resolved = new FileMetadata(f.getPath(), size, lastMod, node.getRightHash(), ObjectType.BLOB.name(), f.getMode());
-                            db.putFile(resolved);
-                            System.out.println("Resolved " + f.getPath() + " using THEIRS version.");
-                        }
-                    } else if (choice.equals("3")) {
-                        Path path = cas.getRootDir().resolve(f.getPath());
-                        if (!Files.exists(path)) {
-                            System.err.println("File does not exist on disk. If deleted, select option 1 or 2.");
-                            continue;
-                        }
-                        String content = Files.readString(path);
-                        if (content.contains("<<<<<<< OURS") || content.contains("=======") || content.contains(">>>>>>> THEIRS")) {
-                            System.err.println("Warning: File still contains conflict markers on disk! Clean the file first, then try resolving manually again.");
-                        } else {
-                            byte[] data = content.getBytes(StandardCharsets.UTF_8);
-                            String newBlobHash;
-                            String typeStr;
-
-                            if (data.length > 1024 * 1024) {
-                                List<FastCDC.Chunk> chunks = FastCDC.chunk(data);
-                                List<String> chunkHashes = new ArrayList<>();
-                                List<Integer> chunkSizes = new ArrayList<>();
-                                for (FastCDC.Chunk chunk : chunks) {
-                                    byte[] cb = chunk.getBytes();
-                                    Blob cblob = new Blob(cb);
-                                    chunkHashes.add(cas.writeObject(cblob));
-                                    chunkSizes.add(cb.length);
-                                }
-                                ChunkTree ct = new ChunkTree(chunkHashes, chunkSizes, data.length);
-                                newBlobHash = cas.writeObject(ct);
-                                typeStr = ObjectType.CHUNK_TREE.name();
+                        String choice = scanner.nextLine().trim();
+                        if (choice.equals("1")) {
+                            if (node.getLeftHash() == null) {
+                                db.removeFile(f.getPath());
+                                Files.deleteIfExists(cas.getRootDir().resolve(f.getPath()));
+                                System.out.println("Resolved " + f.getPath() + " by deleting it (Ours).");
                             } else {
-                                Blob blob = new Blob(data);
-                                newBlobHash = cas.writeObject(blob);
-                                typeStr = ObjectType.BLOB.name();
+                                Blob blob = (Blob) cas.readObject(node.getLeftHash());
+                                Path path = cas.getRootDir().resolve(f.getPath());
+                                Files.write(path, blob.getContent());
+                                long size = Files.size(path);
+                                long lastMod = Files.getLastModifiedTime(path).toMillis();
+                                FileMetadata resolved = new FileMetadata(f.getPath(), size, lastMod, node.getLeftHash(), ObjectType.BLOB.name(), f.getMode());
+                                db.putFile(resolved);
+                                System.out.println("Resolved " + f.getPath() + " using OURS version.");
                             }
+                        } else if (choice.equals("2")) {
+                            if (node.getRightHash() == null) {
+                                db.removeFile(f.getPath());
+                                Files.deleteIfExists(cas.getRootDir().resolve(f.getPath()));
+                                System.out.println("Resolved " + f.getPath() + " by deleting it (Theirs).");
+                            } else {
+                                Blob blob = (Blob) cas.readObject(node.getRightHash());
+                                Path path = cas.getRootDir().resolve(f.getPath());
+                                Files.write(path, blob.getContent());
+                                long size = Files.size(path);
+                                long lastMod = Files.getLastModifiedTime(path).toMillis();
+                                FileMetadata resolved = new FileMetadata(f.getPath(), size, lastMod, node.getRightHash(), ObjectType.BLOB.name(), f.getMode());
+                                db.putFile(resolved);
+                                System.out.println("Resolved " + f.getPath() + " using THEIRS version.");
+                            }
+                        } else if (choice.equals("3")) {
+                            Path path = cas.getRootDir().resolve(f.getPath());
+                            if (!Files.exists(path)) {
+                                System.err.println("File does not exist on disk. If deleted, select option 1 or 2.");
+                                continue;
+                            }
+                            String content = Files.readString(path);
+                            if (content.contains("<<<<<<< OURS") || content.contains("=======") || content.contains(">>>>>>> THEIRS")) {
+                                System.err.println("Warning: File still contains conflict markers on disk! Clean the file first, then try resolving manually again.");
+                            } else {
+                                byte[] data = content.getBytes(StandardCharsets.UTF_8);
+                                String newBlobHash;
+                                String typeStr;
 
-                            long size = Files.size(path);
-                            long lastMod = Files.getLastModifiedTime(path).toMillis();
-                            FileMetadata resolved = new FileMetadata(f.getPath(), size, lastMod, newBlobHash, typeStr, f.getMode());
-                            db.putFile(resolved);
-                            System.out.println("Staged manually resolved file: " + f.getPath());
+                                if (data.length > 1024 * 1024) {
+                                    List<FastCDC.Chunk> chunks = FastCDC.chunk(data);
+                                    List<String> chunkHashes = new ArrayList<>();
+                                    List<Integer> chunkSizes = new ArrayList<>();
+                                    for (FastCDC.Chunk chunk : chunks) {
+                                        byte[] cb = chunk.getBytes();
+                                        Blob cblob = new Blob(cb);
+                                        chunkHashes.add(cas.writeObject(cblob));
+                                        chunkSizes.add(cb.length);
+                                    }
+                                    ChunkTree ct = new ChunkTree(chunkHashes, chunkSizes, data.length);
+                                    newBlobHash = cas.writeObject(ct);
+                                    typeStr = ObjectType.CHUNK_TREE.name();
+                                } else {
+                                    Blob blob = new Blob(data);
+                                    newBlobHash = cas.writeObject(blob);
+                                    typeStr = ObjectType.BLOB.name();
+                                }
+
+                                long size = Files.size(path);
+                                long lastMod = Files.getLastModifiedTime(path).toMillis();
+                                FileMetadata resolved = new FileMetadata(f.getPath(), size, lastMod, newBlobHash, typeStr, f.getMode());
+                                db.putFile(resolved);
+                                System.out.println("Staged manually resolved file: " + f.getPath());
+                            }
+                        } else {
+                            System.out.println("Invalid choice. Skipping.");
                         }
-                    } else {
-                        System.out.println("Invalid choice. Skipping.");
                     }
-                }
 
-                Set<Path> scanned = new HashSet<>();
-                for (FileMetadata f : db.getAllFiles()) {
-                    scanned.add(cas.getRootDir().resolve(f.getPath()));
+                    Set<Path> scanned = new HashSet<>();
+                    for (FileMetadata f : db.getAllFiles()) {
+                        scanned.add(cas.getRootDir().resolve(f.getPath()));
+                    }
+                    wm.scanAndCreateShadowCommit(scanned);
+                    db.commit();
+                    System.out.println("\nResolve run completed.");
                 }
-                wm.scanAndCreateShadowCommit(scanned);
-                db.commit();
-                System.out.println("\nResolve run completed.");
-            }
-            return 0;
+                return 0;
+            });
         }
     }
 
@@ -495,72 +536,74 @@ public class DraftFlow implements Callable<Integer> {
                 System.err.println("Fatal: Not a draftflow repository.");
                 return 1;
             }
-            Path dbPath = cas.getDraftFlowDir().resolve("index").resolve("index.mv.db");
-            try (MetadataStore db = new MetadataStore(dbPath)) {
-                db.open();
-                String activeHead = db.getConfig("activeHead");
-                if (activeHead == null) {
-                    System.err.println("Error: No branch active to upload.");
-                    return 1;
-                }
-                String localHead = db.getConfig("activeRevisionHash");
-                if (localHead == null) {
-                    System.err.println("Error: Branch is empty.");
-                    return 1;
-                }
-
-                RemoteClient client = new RemoteClient(remoteUrl);
-                String remoteHead = client.getRef(activeHead);
-
-                List<String> missingHashes = new ArrayList<>();
-                Queue<String> queue = new LinkedList<>();
-                queue.add(localHead);
-                Set<String> visited = new HashSet<>();
-
-                while (!queue.isEmpty()) {
-                    String curr = queue.poll();
-                    if (curr == null || visited.contains(curr) || curr.equals(remoteHead)) {
-                        continue;
+            return runLockedCommand(cas, () -> {
+                Path dbPath = cas.getDraftFlowDir().resolve("index").resolve("index.mv.db");
+                try (MetadataStore db = new MetadataStore(dbPath)) {
+                    db.open();
+                    String activeHead = db.getConfig("activeHead");
+                    if (activeHead == null) {
+                        System.err.println("Error: No branch active to upload.");
+                        return 1;
                     }
-                    visited.add(curr);
-                    missingHashes.add(curr);
+                    String localHead = db.getConfig("activeRevisionHash");
+                    if (localHead == null) {
+                        System.err.println("Error: Branch is empty.");
+                        return 1;
+                    }
 
-                    collectReferencedObjects(curr, cas, missingHashes);
+                    RemoteClient client = new RemoteClient(remoteUrl);
+                    String remoteHead = client.getRef(activeHead);
 
-                    Revision rev = (Revision) cas.readObject(curr);
-                    queue.addAll(rev.getParentHashes());
+                    List<String> missingHashes = new ArrayList<>();
+                    Queue<String> queue = new LinkedList<>();
+                    queue.add(localHead);
+                    Set<String> visited = new HashSet<>();
+
+                    while (!queue.isEmpty()) {
+                        String curr = queue.poll();
+                        if (curr == null || visited.contains(curr) || curr.equals(remoteHead)) {
+                            continue;
+                        }
+                        visited.add(curr);
+                        missingHashes.add(curr);
+
+                        collectReferencedObjects(curr, cas, missingHashes);
+
+                        Revision rev = (Revision) cas.readObject(curr);
+                        queue.addAll(rev.getParentHashes());
+                    }
+
+                    if (missingHashes.isEmpty()) {
+                        System.out.println("Everything up-to-date.");
+                        return 0;
+                    }
+
+                    System.out.println("Packing " + missingHashes.size() + " objects...");
+                    String packId = "pack-" + UUID.randomUUID().toString().substring(0, 8);
+                    ByteArrayOutputStream out = new ByteArrayOutputStream();
+                    Packer.createPack(missingHashes, cas, out);
+                    byte[] packData = out.toByteArray();
+
+                    System.out.println("Uploading pack " + packId + " to remote...");
+                    client.uploadPack(packId, packData);
+
+                    Map<String, String> remoteIndex = client.downloadIndex();
+                    for (String h : missingHashes) {
+                        remoteIndex.put(h, packId);
+                    }
+                    client.uploadIndex(remoteIndex);
+
+                    System.out.println("Updating remote ref " + activeHead + "...");
+                    try {
+                        OCC.tryUpdateRef(client, activeHead, remoteHead, localHead);
+                        System.out.println("Upload successful!");
+                    } catch (OCC.ConcurrencyException e) {
+                        System.err.println("Upload failed: " + e.getMessage());
+                        return 1;
+                    }
                 }
-
-                if (missingHashes.isEmpty()) {
-                    System.out.println("Everything up-to-date.");
-                    return 0;
-                }
-
-                System.out.println("Packing " + missingHashes.size() + " objects...");
-                String packId = "pack-" + UUID.randomUUID().toString().substring(0, 8);
-                ByteArrayOutputStream out = new ByteArrayOutputStream();
-                Packer.createPack(missingHashes, cas, out);
-                byte[] packData = out.toByteArray();
-
-                System.out.println("Uploading pack " + packId + " to remote...");
-                client.uploadPack(packId, packData);
-
-                Map<String, String> remoteIndex = client.downloadIndex();
-                for (String h : missingHashes) {
-                    remoteIndex.put(h, packId);
-                }
-                client.uploadIndex(remoteIndex);
-
-                System.out.println("Updating remote ref " + activeHead + "...");
-                try {
-                    OCC.tryUpdateRef(client, activeHead, remoteHead, localHead);
-                    System.out.println("Upload successful!");
-                } catch (OCC.ConcurrencyException e) {
-                    System.err.println("Upload failed: " + e.getMessage());
-                    return 1;
-                }
-            }
-            return 0;
+                return 0;
+            });
         }
 
         private void collectReferencedObjects(String revHash, CAS cas, List<String> list) {
@@ -603,68 +646,70 @@ public class DraftFlow implements Callable<Integer> {
                 System.err.println("Fatal: Not a draftflow repository.");
                 return 1;
             }
-            Path dbPath = cas.getDraftFlowDir().resolve("index").resolve("index.mv.db");
-            try (MetadataStore db = new MetadataStore(dbPath)) {
-                db.open();
-                String activeHead = db.getConfig("activeHead");
-                if (activeHead == null) {
-                    System.err.println("Error: No active branch to download into.");
-                    return 1;
-                }
-
-                RemoteClient client = new RemoteClient(remoteUrl);
-                String remoteHead = client.getRef(activeHead);
-                if (remoteHead == null) {
-                    System.out.println("Branch " + activeHead + " does not exist on remote.");
-                    return 0;
-                }
-
-                String localHead = db.getConfig("activeRevisionHash");
-                if (remoteHead.equals(localHead)) {
-                    System.out.println("Already up-to-date.");
-                    return 0;
-                }
-
-                Map<String, String> remoteIndex = client.downloadIndex();
-                Set<String> missing = new HashSet<>();
-                Queue<String> queue = new LinkedList<>();
-                queue.add(remoteHead);
-
-                while (!queue.isEmpty()) {
-                    String curr = queue.poll();
-                    if (curr == null || missing.contains(curr)) {
-                        continue;
-                    }
-                    Path objPath = cas.getDraftFlowDir().resolve("objects").resolve(curr.substring(0, 2)).resolve(curr.substring(2));
-                    if (Files.exists(objPath)) {
-                        continue;
+            return runLockedCommand(cas, () -> {
+                Path dbPath = cas.getDraftFlowDir().resolve("index").resolve("index.mv.db");
+                try (MetadataStore db = new MetadataStore(dbPath)) {
+                    db.open();
+                    String activeHead = db.getConfig("activeHead");
+                    if (activeHead == null) {
+                        System.err.println("Error: No active branch to download into.");
+                        return 1;
                     }
 
-                    missing.add(curr);
-                    String packId = remoteIndex.get(curr);
-                    if (packId != null) {
-                        System.out.println("Downloading missing pack: " + packId);
-                        byte[] packData = client.downloadPack(packId);
-                        ByteArrayInputStream in = new ByteArrayInputStream(packData);
-                        Packer.unpack(in, cas);
+                    RemoteClient client = new RemoteClient(remoteUrl);
+                    String remoteHead = client.getRef(activeHead);
+                    if (remoteHead == null) {
+                        System.out.println("Branch " + activeHead + " does not exist on remote.");
+                        return 0;
                     }
 
-                    try {
-                        Revision rev = (Revision) cas.readObject(curr);
-                        queue.addAll(rev.getParentHashes());
-                    } catch (Exception ignored) {}
+                    String localHead = db.getConfig("activeRevisionHash");
+                    if (remoteHead.equals(localHead)) {
+                        System.out.println("Already up-to-date.");
+                        return 0;
+                    }
+
+                    Map<String, String> remoteIndex = client.downloadIndex();
+                    Set<String> missing = new HashSet<>();
+                    Queue<String> queue = new LinkedList<>();
+                    queue.add(remoteHead);
+
+                    while (!queue.isEmpty()) {
+                        String curr = queue.poll();
+                        if (curr == null || missing.contains(curr)) {
+                            continue;
+                        }
+                        Path objPath = cas.getDraftFlowDir().resolve("objects").resolve(curr.substring(0, 2)).resolve(curr.substring(2));
+                        if (Files.exists(objPath)) {
+                            continue;
+                        }
+
+                        missing.add(curr);
+                        String packId = remoteIndex.get(curr);
+                        if (packId != null) {
+                            System.out.println("Downloading missing pack: " + packId);
+                            byte[] packData = client.downloadPack(packId);
+                            ByteArrayInputStream in = new ByteArrayInputStream(packData);
+                            Packer.unpack(in, cas);
+                        }
+
+                        try {
+                            Revision rev = (Revision) cas.readObject(curr);
+                            queue.addAll(rev.getParentHashes());
+                        } catch (Exception ignored) {}
+                    }
+
+                    db.setRef(activeHead, remoteHead);
+                    db.setConfig("activeRevisionHash", remoteHead);
+                    db.commit();
+
+                    WorkspaceManager wm = new WorkspaceManager(cas, db);
+                    wm.restoreWorkingCopy(remoteHead);
+
+                    System.out.println("Download successful! Updated local head to: " + remoteHead.substring(0, 8));
                 }
-
-                db.setRef(activeHead, remoteHead);
-                db.setConfig("activeRevisionHash", remoteHead);
-                db.commit();
-
-                WorkspaceManager wm = new WorkspaceManager(cas, db);
-                wm.restoreWorkingCopy(remoteHead);
-
-                System.out.println("Download successful! Updated local head to: " + remoteHead.substring(0, 8));
-            }
-            return 0;
+                return 0;
+            });
         }
     }
 
@@ -729,33 +774,35 @@ public class DraftFlow implements Callable<Integer> {
                 System.err.println("Fatal: Not a draftflow repository.");
                 return 1;
             }
-            Path dbPath = cas.getDraftFlowDir().resolve("index").resolve("index.mv.db");
-            try (MetadataStore db = new MetadataStore(dbPath)) {
-                db.open();
-                if (newBranch != null) {
-                    String head = db.getConfig("activeRevisionHash");
-                    db.setRef("heads/" + newBranch, head);
-                    db.commit();
-                    System.out.println("Created branch: " + newBranch);
-                } else if (deleteBranch != null) {
-                    db.removeRef("heads/" + deleteBranch);
-                    db.commit();
-                    System.out.println("Deleted branch: " + deleteBranch);
-                } else {
-                    String active = db.getConfig("activeHead");
-                    for (String name : db.getRefNames()) {
-                        if (name.startsWith("heads/")) {
-                            String branch = name.replace("heads/", "");
-                            if (name.equals(active)) {
-                                System.out.println("* " + branch);
-                            } else {
-                                System.out.println("  " + branch);
+            return runLockedCommand(cas, () -> {
+                Path dbPath = cas.getDraftFlowDir().resolve("index").resolve("index.mv.db");
+                try (MetadataStore db = new MetadataStore(dbPath)) {
+                    db.open();
+                    if (newBranch != null) {
+                        String head = db.getConfig("activeRevisionHash");
+                        db.setRef("heads/" + newBranch, head);
+                        db.commit();
+                        System.out.println("Created branch: " + newBranch);
+                    } else if (deleteBranch != null) {
+                        db.removeRef("heads/" + deleteBranch);
+                        db.commit();
+                        System.out.println("Deleted branch: " + deleteBranch);
+                    } else {
+                        String active = db.getConfig("activeHead");
+                        for (String name : db.getRefNames()) {
+                            if (name.startsWith("heads/")) {
+                                String branch = name.replace("heads/", "");
+                                if (name.equals(active)) {
+                                    System.out.println("* " + branch);
+                                } else {
+                                    System.out.println("  " + branch);
+                                }
                             }
                         }
                     }
                 }
-            }
-            return 0;
+                return 0;
+            });
         }
     }
 
@@ -769,53 +816,137 @@ public class DraftFlow implements Callable<Integer> {
                 System.err.println("Fatal: Not a draftflow repository.");
                 return 1;
             }
-            Path dbPath = cas.getDraftFlowDir().resolve("index").resolve("index.mv.db");
-            try (MetadataStore db = new MetadataStore(dbPath)) {
-                db.open();
-                String activeRev = db.getConfig("activeRevisionHash");
-                if (activeRev == null) {
-                    System.err.println("Error: Nothing to undo.");
-                    return 1;
-                }
-
-                String curr = activeRev;
-                Revision discardRev = null;
-                while (curr != null) {
-                    Revision r = (Revision) cas.readObject(curr);
-                    if (!r.isDraft()) {
-                        discardRev = r;
-                        break;
+            return runLockedCommand(cas, () -> {
+                Path dbPath = cas.getDraftFlowDir().resolve("index").resolve("index.mv.db");
+                try (MetadataStore db = new MetadataStore(dbPath)) {
+                    db.open();
+                    String activeRev = db.getConfig("activeRevisionHash");
+                    if (activeRev == null) {
+                        System.err.println("Error: Nothing to undo.");
+                        return 1;
                     }
-                    if (r.getParentHashes().isEmpty()) {
-                        break;
+
+                    String curr = activeRev;
+                    Revision discardRev = null;
+                    while (curr != null) {
+                        Revision r = (Revision) cas.readObject(curr);
+                        if (!r.isDraft()) {
+                            discardRev = r;
+                            break;
+                        }
+                        if (r.getParentHashes().isEmpty()) {
+                            break;
+                        }
+                        curr = r.getParentHashes().get(0);
                     }
-                    curr = r.getParentHashes().get(0);
+
+                    if (discardRev == null) {
+                        System.err.println("Error: No permanent commit to undo.");
+                        return 1;
+                    }
+
+                    if (discardRev.getParentHashes().isEmpty()) {
+                        System.err.println("Error: Root revision reached, cannot undo.");
+                        return 1;
+                    }
+
+                    String parent = discardRev.getParentHashes().get(0);
+                    String activeHead = db.getConfig("activeHead");
+                    if (activeHead != null) {
+                        db.setRef(activeHead, parent);
+                    }
+                    db.setConfig("activeRevisionHash", parent);
+                    db.commit();
+
+                    WorkspaceManager wm = new WorkspaceManager(cas, db);
+                    wm.restoreWorkingCopy(parent);
+
+                    System.out.println("Reverted branch ref back to: " + parent.substring(0, 8));
                 }
+                return 0;
+            });
+        }
+    }
 
-                if (discardRev == null) {
-                    System.err.println("Error: No permanent commit to undo.");
-                    return 1;
-                }
+    public static Integer runLockedCommand(CAS cas, Callable<Integer> action) throws Exception {
+        cas.acquireLock();
+        try {
+            return action.call();
+        } finally {
+            cas.releaseLock();
+        }
+    }
 
-                if (discardRev.getParentHashes().isEmpty()) {
-                    System.err.println("Error: Root revision reached, cannot undo.");
-                    return 1;
-                }
-
-                String parent = discardRev.getParentHashes().get(0);
-                String activeHead = db.getConfig("activeHead");
-                if (activeHead != null) {
-                    db.setRef(activeHead, parent);
-                }
-                db.setConfig("activeRevisionHash", parent);
-                db.commit();
-
-                WorkspaceManager wm = new WorkspaceManager(cas, db);
-                wm.restoreWorkingCopy(parent);
-
-                System.out.println("Reverted branch ref back to: " + parent.substring(0, 8));
+    @Command(name = "fsck", description = "Verify CAS objects and index integrity, prune orphaned entries")
+    public static class FsckCmd implements Callable<Integer> {
+        @Override
+        public Integer call() throws Exception {
+            Path currentDir = getCurrentDir();
+            CAS cas = new CAS(currentDir);
+            if (!Files.exists(cas.getDraftFlowDir())) {
+                System.err.println("Fatal: Not a draftflow repository.");
+                return 1;
             }
-            return 0;
+            
+            return runLockedCommand(cas, () -> {
+                Path dbPath = cas.getDraftFlowDir().resolve("index").resolve("index.mv.db");
+                try (MetadataStore db = new MetadataStore(dbPath)) {
+                    db.open();
+                    System.out.println("Running DraftFlow fsck integrity verification...");
+                    
+                    Path objectsDir = cas.getDraftFlowDir().resolve("objects");
+                    if (!Files.exists(objectsDir)) {
+                        System.out.println("No CAS objects to verify.");
+                        return 0;
+                    }
+                    
+                    List<String> corruptedObjects = new ArrayList<>();
+                    List<String> validObjects = new ArrayList<>();
+                    
+                    try (DirectoryStream<Path> prefixes = Files.newDirectoryStream(objectsDir)) {
+                        for (Path prefixDir : prefixes) {
+                            if (!Files.isDirectory(prefixDir)) continue;
+                            try (DirectoryStream<Path> objs = Files.newDirectoryStream(prefixDir)) {
+                                for (Path objPath : objs) {
+                                    String hash = prefixDir.getFileName().toString() + objPath.getFileName().toString();
+                                    try {
+                                        cas.readObject(hash);
+                                        validObjects.add(hash);
+                                    } catch (Exception e) {
+                                        corruptedObjects.add(hash);
+                                        Files.deleteIfExists(objPath);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    System.out.println("Checked " + (validObjects.size() + corruptedObjects.size()) + " CAS objects.");
+                    if (!corruptedObjects.isEmpty()) {
+                        System.err.println("Found and cleared " + corruptedObjects.size() + " corrupted objects: " + corruptedObjects);
+                    } else {
+                        System.out.println("All stored CAS objects are healthy.");
+                    }
+                    
+                    List<FileMetadata> trackedFiles = db.getAllFiles();
+                    int missingRefs = 0;
+                    for (FileMetadata f : trackedFiles) {
+                        String hash = f.getHash();
+                        Path objPath = objectsDir.resolve(hash.substring(0, 2)).resolve(hash.substring(2));
+                        if (!Files.exists(objPath)) {
+                            System.err.println("Warning: Tracked file " + f.getPath() + " references missing CAS object " + hash);
+                            missingRefs++;
+                        }
+                    }
+                    if (missingRefs > 0) {
+                        System.err.println("Integrity Check Failed: " + missingRefs + " tracked files are missing their content in the CAS store.");
+                        return 1;
+                    } else {
+                        System.out.println("Index matches CAS successfully.");
+                    }
+                }
+                return 0;
+            });
         }
     }
 

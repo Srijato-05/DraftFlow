@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 public class MetadataStore implements AutoCloseable {
     private final Path dbFilePath;
@@ -18,6 +19,7 @@ public class MetadataStore implements AutoCloseable {
     private MVMap<String, String> changeHistoryMap;
     private MVMap<String, String> configMap;
 
+    private final java.util.Map<String, FileMetadata> fileMetadataCache = new java.util.concurrent.ConcurrentHashMap<>();
     private Thread shutdownHook;
 
     public MetadataStore(Path dbFilePath) {
@@ -29,20 +31,36 @@ public class MetadataStore implements AutoCloseable {
         try {
             this.store = new MVStore.Builder()
                     .fileName(dbFilePath.toString())
+                    .compress()
                     .open();
         } catch (Exception e) {
             // MVStore corruption recovery: backup corrupt db and recreate a clean one
             Path backupPath = dbFilePath.resolveSibling(dbFilePath.getFileName().toString() + ".corrupted_" + System.currentTimeMillis());
             try {
                 if (Files.exists(dbFilePath)) {
-                    Files.move(dbFilePath, backupPath);
+                    Files.move(dbFilePath, backupPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                 }
             } catch (IOException ie) {
-                Files.deleteIfExists(dbFilePath);
+                try {
+                    Files.deleteIfExists(dbFilePath);
+                } catch (IOException ignored) {}
             }
-            this.store = new MVStore.Builder()
-                    .fileName(dbFilePath.toString())
-                    .open();
+            try {
+                this.store = new MVStore.Builder()
+                        .fileName(dbFilePath.toString())
+                        .compress()
+                        .open();
+            } catch (Exception e2) {
+                // Secondary fallback: open in an alternative database file
+                Path fallbackPath = dbFilePath.resolveSibling(dbFilePath.getFileName().toString() + ".fallback");
+                try {
+                    Files.deleteIfExists(fallbackPath);
+                } catch (IOException ignored) {}
+                this.store = new MVStore.Builder()
+                        .fileName(fallbackPath.toString())
+                        .compress()
+                        .open();
+            }
         }
         
         this.indexMap = this.store.openMap("index");
@@ -50,6 +68,15 @@ public class MetadataStore implements AutoCloseable {
         this.changeMap = this.store.openMap("changes");
         this.changeHistoryMap = this.store.openMap("changeHistory");
         this.configMap = this.store.openMap("config");
+
+        // Warm up and populate in-memory cache
+        this.fileMetadataCache.clear();
+        for (Map.Entry<String, String> entry : indexMap.entrySet()) {
+            FileMetadata fm = FileMetadata.fromJson(entry.getValue());
+            if (fm != null) {
+                this.fileMetadataCache.put(entry.getKey(), fm);
+            }
+        }
 
         // Graceful VM shutdown hook to commit and close MVStore
         this.shutdownHook = new Thread(() -> {
@@ -91,27 +118,25 @@ public class MetadataStore implements AutoCloseable {
 
     public synchronized void putFile(FileMetadata meta) {
         indexMap.put(meta.getPath(), meta.toJson());
+        fileMetadataCache.put(meta.getPath(), meta);
     }
 
     public synchronized FileMetadata getFile(String path) {
-        String json = indexMap.get(path);
-        return json != null ? FileMetadata.fromJson(json) : null;
+        return fileMetadataCache.get(path);
     }
 
     public synchronized void removeFile(String path) {
         indexMap.remove(path);
+        fileMetadataCache.remove(path);
     }
 
     public synchronized List<FileMetadata> getAllFiles() {
-        List<FileMetadata> list = new ArrayList<>();
-        for (String json : indexMap.values()) {
-            list.add(FileMetadata.fromJson(json));
-        }
-        return list;
+        return new ArrayList<>(fileMetadataCache.values());
     }
 
     public synchronized void clearIndex() {
         indexMap.clear();
+        fileMetadataCache.clear();
     }
 
     // --- Ref / Branch Operations ---

@@ -51,6 +51,11 @@ public class FileMetadata {
     }
 
     public static FileMetadata fromJson(String json) {
-        return GSON.fromJson(json, FileMetadata.class);
+        try {
+            return GSON.fromJson(json, FileMetadata.class);
+        } catch (Exception e) {
+            System.err.println("Warning: Failed to parse FileMetadata JSON: " + json + ". Error: " + e.getMessage());
+            return null;
+        }
     }
 }

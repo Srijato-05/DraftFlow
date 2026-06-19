@@ -14,6 +14,9 @@ public class CAS {
     private final Path draftFlowDir;
     private final Path objectsDir;
 
+    private java.nio.channels.FileChannel lockChannel;
+    private java.nio.channels.FileLock lock;
+
     public CAS(Path rootDir) {
         this.rootDir = rootDir;
         this.draftFlowDir = rootDir.resolve(".draftflow");
@@ -130,8 +133,93 @@ public class CAS {
         return draftFlowDir;
     }
 
-    public DraftFlowConfig getConfig() throws IOException {
-        return DraftFlowConfig.load(draftFlowDir.resolve("config.json"));
+    public DraftFlowConfig getConfig() {
+        Path configPath = draftFlowDir.resolve("config.json");
+        try {
+            if (Files.exists(configPath)) {
+                return DraftFlowConfig.load(configPath);
+            }
+        } catch (Exception e) {
+            System.err.println("Warning: config.json was corrupted or unparseable. Automatically regenerating it...");
+        }
+
+        try {
+            Files.createDirectories(draftFlowDir);
+            String defaultConfig = "{\n  \"version\": \"1.0\",\n  \"hashAlgorithm\": \"SHA-256\",\n  \"exclude\": [\".git\", \".draftflow\", \"build\", \"out\", \"target\", \".gradle\", \".idea\", \"bin\", \".vscode\"]\n}";
+            Files.writeString(configPath, defaultConfig, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            return DraftFlowConfig.load(configPath);
+        } catch (Exception e) {
+            return new DraftFlowConfig();
+        }
+    }
+
+    public synchronized boolean tryAcquireLock(long timeoutMs) throws IOException {
+        Path lockFile = draftFlowDir.resolve("index.lock");
+        Files.createDirectories(lockFile.getParent());
+        
+        long start = System.currentTimeMillis();
+        while (true) {
+            try {
+                if (lockChannel == null) {
+                    lockChannel = java.nio.channels.FileChannel.open(lockFile, 
+                        StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.READ);
+                }
+                lock = lockChannel.tryLock();
+                if (lock != null) {
+                    return true;
+                }
+            } catch (Exception e) {
+                // Ignore and try again
+            }
+
+            if (System.currentTimeMillis() - start > timeoutMs) {
+                closeLockChannel();
+                return false;
+            }
+
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                closeLockChannel();
+                return false;
+            }
+        }
+    }
+
+    public void acquireLock() throws IOException {
+        if (!tryAcquireLock(5000)) {
+            throw new IOException("Another DraftFlow process is holding the workspace lock. Please wait or release any hanging commands.");
+        }
+    }
+
+    public synchronized void releaseLock() {
+        try {
+            if (lock != null) {
+                lock.release();
+                lock = null;
+            }
+        } catch (IOException e) {
+            // Ignore
+        }
+        closeLockChannel();
+        
+        try {
+            Files.deleteIfExists(draftFlowDir.resolve("index.lock"));
+        } catch (IOException e) {
+            // Ignore
+        }
+    }
+
+    private void closeLockChannel() {
+        if (lockChannel != null) {
+            try {
+                lockChannel.close();
+            } catch (IOException e) {
+                // Ignore
+            }
+            lockChannel = null;
+        }
     }
 
     public String resolveHash(String shortHash) throws IOException {

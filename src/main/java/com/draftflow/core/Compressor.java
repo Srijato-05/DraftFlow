@@ -14,7 +14,7 @@ public class Compressor {
         deflater.finish();
 
         try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream(data.length)) {
-            byte[] buffer = new byte[1024];
+            byte[] buffer = new byte[8192];
             while (!deflater.finished()) {
                 int count = deflater.deflate(buffer);
                 outputStream.write(buffer, 0, count);
@@ -32,7 +32,7 @@ public class Compressor {
         inflater.setInput(data);
 
         try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream(data.length * 2)) {
-            byte[] buffer = new byte[1024];
+            byte[] buffer = new byte[8192];
             while (!inflater.finished()) {
                 int count = inflater.inflate(buffer);
                 outputStream.write(buffer, 0, count);
