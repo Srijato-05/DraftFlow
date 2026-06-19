@@ -1,0 +1,12 @@
+rootProject.name = 'DraftFlow'
+
+File vertexMain = new File(rootDir, 'src/main/java/com/vertex')
+if (vertexMain.exists()) {
+    println "Cleaning up old vertex main source directory: " + vertexMain
+    vertexMain.deleteDir()
+}
+File vertexTest = new File(rootDir, 'src/test/java/com/vertex')
+if (vertexTest.exists()) {
+    println "Cleaning up old vertex test source directory: " + vertexTest
+    vertexTest.deleteDir()
+}
