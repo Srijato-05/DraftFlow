@@ -184,8 +184,13 @@ public class DraftFlow implements Callable<Integer> {
                 Files.walkFileTree(cas.getRootDir(), new SimpleFileVisitor<>() {
                     @Override
                     public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
-                        if (dir.getFileName() != null && dir.getFileName().toString().equals(".draftflow")) {
-                            return FileVisitResult.SKIP_SUBTREE;
+                        if (dir.getFileName() != null) {
+                            String name = dir.getFileName().toString();
+                            if (name.equals(".draftflow") || name.equals(".git") || name.equals(".gradle")
+                                    || name.equals("build") || name.equals("bin")
+                                    || name.equals(".idea") || name.equals(".vscode")) {
+                                return FileVisitResult.SKIP_SUBTREE;
+                            }
                         }
                         return FileVisitResult.CONTINUE;
                     }

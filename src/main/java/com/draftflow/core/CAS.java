@@ -28,10 +28,9 @@ public class CAS {
         Files.createDirectories(draftFlowDir.resolve("index"));
         Files.createDirectories(draftFlowDir.resolve("logs"));
 
-        // Create initial default config if missing
         Path configPath = draftFlowDir.resolve("config.json");
         if (!Files.exists(configPath)) {
-            String defaultConfig = "{\n  \"version\": \"1.0\",\n  \"hashAlgorithm\": \"SHA-256\",\n  \"exclude\": [\".git\", \".draftflow\", \"build\", \"out\", \"target\", \".gradle\", \".idea\"]\n}";
+            String defaultConfig = "{\n  \"version\": \"1.0\",\n  \"hashAlgorithm\": \"SHA-256\",\n  \"exclude\": [\".git\", \".draftflow\", \"build\", \"out\", \"target\", \".gradle\", \".idea\", \"bin\", \".vscode\"]\n}";
             Files.writeString(configPath, defaultConfig);
         }
     }
