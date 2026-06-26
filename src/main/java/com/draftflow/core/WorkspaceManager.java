@@ -6,6 +6,7 @@ import com.draftflow.db.MetadataStore;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.io.ByteArrayOutputStream;
 import java.nio.file.*;
 import java.util.*;
 
@@ -76,9 +77,15 @@ public class WorkspaceManager {
                         objectHash = cas.writeObject(chunkTree);
                         typeStr = ObjectType.CHUNK_TREE.name();
                     } else { // <= 1MB: Standard Blob
-                        Blob blob = new Blob(data);
-                        objectHash = cas.writeObject(blob);
-                        typeStr = ObjectType.BLOB.name();
+                        if (cached != null && cached.getType().equals(ObjectType.BLOB.name())) {
+                            objectHash = cas.writeBlobWithDelta(data, cached.getHash());
+                            DraftFlowObject written = cas.readObject(objectHash);
+                            typeStr = written.getType().name();
+                        } else {
+                            Blob blob = new Blob(data);
+                            objectHash = cas.writeObject(blob);
+                            typeStr = ObjectType.BLOB.name();
+                        }
                     }
 
                     // Get mode
@@ -104,6 +111,8 @@ public class WorkspaceManager {
         String parentHash = null;
         if (activeHead != null) {
             parentHash = db.getRef(activeHead);
+        } else {
+            parentHash = db.getConfig("activeRevisionHash");
         }
 
         List<String> parents = new ArrayList<>();
@@ -175,6 +184,9 @@ public class WorkspaceManager {
         
         try {
             if (file.type == ObjectType.BLOB) {
+                Blob blob = (Blob) cas.readObject(file.hash);
+                Files.write(tempPath, blob.getContent());
+            } else if (file.type == ObjectType.DELTA_BLOB) {
                 Blob blob = (Blob) cas.readObject(file.hash);
                 Files.write(tempPath, blob.getContent());
             } else if (file.type == ObjectType.CHUNK_TREE) {
@@ -395,5 +407,120 @@ public class WorkspaceManager {
             this.mode = mode;
             this.hash = hash;
         }
+    }
+
+    public synchronized void applyRevisionDiff(String baseRevHash, String targetRevHash) throws IOException {
+        Path rootDir = cas.getRootDir();
+
+        Revision baseRev = (Revision) cas.readObject(baseRevHash);
+        List<TreeFile> baseFiles = new ArrayList<>();
+        collectFiles("", baseRev.getTreeHash(), baseFiles);
+
+        Revision targetRev = (Revision) cas.readObject(targetRevHash);
+        List<TreeFile> targetFiles = new ArrayList<>();
+        collectFiles("", targetRev.getTreeHash(), targetFiles);
+
+        Map<String, TreeFile> baseMap = new HashMap<>();
+        for (TreeFile tf : baseFiles) {
+            baseMap.put(tf.relPath, tf);
+        }
+
+        Map<String, TreeFile> targetMap = new HashMap<>();
+        for (TreeFile tf : targetFiles) {
+            targetMap.put(tf.relPath, tf);
+        }
+
+        Set<String> allPaths = new HashSet<>();
+        allPaths.addAll(baseMap.keySet());
+        allPaths.addAll(targetMap.keySet());
+
+        for (String relPath : allPaths) {
+            Path diskPath = rootDir.resolve(relPath);
+            TreeFile baseFile = baseMap.get(relPath);
+            TreeFile targetFile = targetMap.get(relPath);
+
+            if (baseFile == null && targetFile != null) {
+                // Added
+                byte[] targetBytes = getFileBytes(targetFile.hash, targetFile.type);
+                Files.createDirectories(diskPath.getParent());
+                Files.write(diskPath, targetBytes);
+                if (targetFile.mode == 100755) {
+                    diskPath.toFile().setExecutable(true, false);
+                } else {
+                    diskPath.toFile().setExecutable(false, false);
+                }
+                long size = Files.size(diskPath);
+                long lastMod = Files.getLastModifiedTime(diskPath).toMillis();
+                db.putFile(new FileMetadata(relPath, size, lastMod, targetFile.hash, targetFile.type.name(), targetFile.mode));
+            } else if (baseFile != null && targetFile == null) {
+                // Deleted
+                Files.deleteIfExists(diskPath);
+                db.removeFile(relPath);
+            } else if (baseFile != null && targetFile != null) {
+                if (!baseFile.hash.equals(targetFile.hash)) {
+                    byte[] baseBytes = getFileBytes(baseFile.hash, baseFile.type);
+                    byte[] targetBytes = getFileBytes(targetFile.hash, targetFile.type);
+
+                    byte[] diskBytes = new byte[0];
+                    if (Files.exists(diskPath)) {
+                        diskBytes = Files.readAllBytes(diskPath);
+                    }
+
+                    if (Arrays.equals(diskBytes, baseBytes)) {
+                        Files.createDirectories(diskPath.getParent());
+                        Files.write(diskPath, targetBytes);
+                        if (targetFile.mode == 100755) {
+                            diskPath.toFile().setExecutable(true, false);
+                        } else {
+                            diskPath.toFile().setExecutable(false, false);
+                        }
+                        long size = Files.size(diskPath);
+                        long lastMod = Files.getLastModifiedTime(diskPath).toMillis();
+                        db.putFile(new FileMetadata(relPath, size, lastMod, targetFile.hash, targetFile.type.name(), targetFile.mode));
+                    } else {
+                        List<String> baseLines = Arrays.asList(new String(baseBytes, java.nio.charset.StandardCharsets.UTF_8).split("\\r?\\n"));
+                        List<String> oursLines = Arrays.asList(new String(diskBytes, java.nio.charset.StandardCharsets.UTF_8).split("\\r?\\n"));
+                        List<String> theirsLines = Arrays.asList(new String(targetBytes, java.nio.charset.StandardCharsets.UTF_8).split("\\r?\\n"));
+
+                        com.draftflow.merge.LineMerge.MergeResult mergeRes = com.draftflow.merge.LineMerge.merge(baseLines, oursLines, theirsLines);
+                        StringBuilder sb = new StringBuilder();
+                        for (String line : mergeRes.mergedLines) {
+                            sb.append(line).append("\n");
+                        }
+                        byte[] mergedBytes = sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                        Files.write(diskPath, mergedBytes);
+
+                        if (!mergeRes.clean) {
+                            String oursHash = cas.writeObject(new Blob(diskBytes));
+                            ConflictNode conflictNode = new ConflictNode(baseFile.hash, oursHash, targetFile.hash, relPath);
+                            String conflictHash = cas.writeObject(conflictNode);
+                            db.putFile(new FileMetadata(relPath, mergedBytes.length, System.currentTimeMillis(), conflictHash, ObjectType.CONFLICT.name(), targetFile.mode));
+                        } else {
+                            String mergedHash = cas.writeObject(new Blob(mergedBytes));
+                            long size = Files.size(diskPath);
+                            long lastMod = Files.getLastModifiedTime(diskPath).toMillis();
+                            db.putFile(new FileMetadata(relPath, size, lastMod, mergedHash, ObjectType.BLOB.name(), targetFile.mode));
+                        }
+                    }
+                }
+            }
+        }
+        db.commit();
+    }
+
+    private byte[] getFileBytes(String hash, ObjectType type) throws IOException {
+        if (type == ObjectType.BLOB || type == ObjectType.DELTA_BLOB) {
+            Blob b = (Blob) cas.readObject(hash);
+            return b.getContent();
+        } else if (type == ObjectType.CHUNK_TREE) {
+            ChunkTree ct = (ChunkTree) cas.readObject(hash);
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            for (String ch : ct.getChunkHashes()) {
+                Blob b = (Blob) cas.readObject(ch);
+                out.write(b.getContent());
+            }
+            return out.toByteArray();
+        }
+        throw new IOException("Cannot read bytes for type: " + type);
     }
 }

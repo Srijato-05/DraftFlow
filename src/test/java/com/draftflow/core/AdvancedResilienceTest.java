@@ -63,7 +63,7 @@ public class AdvancedResilienceTest {
     }
 
     @Test
-    public void testFsckIntegrityAndCorruptedObjectPruning() throws Exception {
+    public void testVerifyIntegrityAndCorruptedObjectPruning() throws Exception {
         CAS cas = new CAS(tempDir);
         cas.init();
 
@@ -102,16 +102,16 @@ public class AdvancedResilienceTest {
                     .resolve(healthyHash.substring(2));
         }
 
-        // Execute the FsckCmd directly using mock runLockedCommand
-        // FsckCmd should detect corruption, delete the corrupted file, and return failure (1) because file2.txt's CAS object is now missing from disk.
+        // Execute the VerifyCmd directly using mock runLockedCommand
+        // VerifyCmd should detect corruption, delete the corrupted file, and return failure (1) because file2.txt's CAS object is now missing from disk.
         System.setProperty("draftflow.dir", tempDir.toAbsolutePath().toString());
-        DraftFlow.FsckCmd fsck = new DraftFlow.FsckCmd();
+        DraftFlow.VerifyCmd verify = new DraftFlow.VerifyCmd();
         
-        int exitCode = fsck.call();
-        assertEquals(1, exitCode, "Fsck should return exit code 1 due to missing ref for file2.txt");
+        int exitCode = verify.call();
+        assertEquals(1, exitCode, "Verify should return exit code 1 due to missing ref for file2.txt");
 
         // Verify the corrupted object file was deleted (pruned)
-        assertFalse(Files.exists(corruptPath), "Corrupted object file should have been deleted by fsck");
+        assertFalse(Files.exists(corruptPath), "Corrupted object file should have been deleted by verify");
         
         // Verify healthy object file is still there
         assertTrue(Files.exists(healthyPath), "Healthy object file should remain untouched");

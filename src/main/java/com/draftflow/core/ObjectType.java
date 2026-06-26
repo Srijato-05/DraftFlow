@@ -5,5 +5,6 @@ public enum ObjectType {
     TREE,
     REVISION,
     CONFLICT,
-    CHUNK_TREE
+    CHUNK_TREE,
+    DELTA_BLOB
 }

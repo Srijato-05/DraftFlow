@@ -122,11 +122,22 @@ public class FSWatcher {
                     continue;
                 }
 
-                // If a new directory is created, register it recursively
+                // If a new directory is created, register it recursively and scan pre-existing contents
                 if (kind == StandardWatchEventKinds.ENTRY_CREATE) {
                     try {
                         if (Files.isDirectory(child, LinkOption.NOFOLLOW_LINKS)) {
                             registerAll(child);
+                            
+                            // Walk and add all children of the newly created folder to pendingChanges
+                            Files.walkFileTree(child, new SimpleFileVisitor<>() {
+                                @Override
+                                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                                    if (!isExcluded(file)) {
+                                        pendingChanges.add(file);
+                                    }
+                                    return FileVisitResult.CONTINUE;
+                                }
+                            });
                         }
                     } catch (IOException e) {
                         System.err.println("Failed to dynamically register directory: " + child + " : " + e.getMessage());

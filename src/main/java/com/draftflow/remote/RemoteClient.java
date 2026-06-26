@@ -18,7 +18,9 @@ public class RemoteClient {
 
     public RemoteClient(String remoteUrl) {
         this.remoteUrl = remoteUrl.endsWith("/") ? remoteUrl : remoteUrl + "/";
-        this.httpClient = HttpClient.newBuilder().build();
+        this.httpClient = HttpClient.newBuilder()
+                .connectTimeout(java.time.Duration.ofSeconds(10))
+                .build();
     }
 
     @FunctionalInterface
@@ -53,7 +55,11 @@ public class RemoteClient {
         } else {
             return executeWithRetry(() -> {
                 URI uri = URI.create(remoteUrl + "refs/" + refName);
-                HttpRequest request = HttpRequest.newBuilder().uri(uri).GET().build();
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(uri)
+                        .timeout(java.time.Duration.ofSeconds(10))
+                        .GET()
+                        .build();
                 HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
                 if (response.statusCode() == 404) {
                     return null;
@@ -70,12 +76,20 @@ public class RemoteClient {
         if (remoteUrl.startsWith("file://")) {
             Path refPath = getLocalPath("refs/" + refName);
             Files.createDirectories(refPath.getParent());
-            Files.writeString(refPath, revisionHash);
+            Path tempPath = refPath.getParent().resolve(refPath.getFileName().toString() + ".tmp_" + java.util.UUID.randomUUID());
+            try {
+                Files.writeString(tempPath, revisionHash);
+                Files.move(tempPath, refPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            } catch (IOException e) {
+                Files.deleteIfExists(tempPath);
+                throw e;
+            }
         } else {
             executeWithRetry(() -> {
                 URI uri = URI.create(remoteUrl + "refs/" + refName);
                 HttpRequest request = HttpRequest.newBuilder()
                         .uri(uri)
+                        .timeout(java.time.Duration.ofSeconds(10))
                         .PUT(HttpRequest.BodyPublishers.ofString(revisionHash))
                         .build();
                 HttpResponse<Void> response = httpClient.send(request, HttpResponse.BodyHandlers.discarding());
@@ -91,12 +105,20 @@ public class RemoteClient {
         if (remoteUrl.startsWith("file://")) {
             Path packPath = getLocalPath("packs/" + packId + ".dfpack");
             Files.createDirectories(packPath.getParent());
-            Files.write(packPath, packData);
+            Path tempPath = packPath.getParent().resolve(packPath.getFileName().toString() + ".tmp_" + java.util.UUID.randomUUID());
+            try {
+                Files.write(tempPath, packData);
+                Files.move(tempPath, packPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            } catch (IOException e) {
+                Files.deleteIfExists(tempPath);
+                throw e;
+            }
         } else {
             executeWithRetry(() -> {
                 URI uri = URI.create(remoteUrl + "packs/" + packId + ".dfpack");
                 HttpRequest request = HttpRequest.newBuilder()
                         .uri(uri)
+                        .timeout(java.time.Duration.ofSeconds(30))
                         .PUT(HttpRequest.BodyPublishers.ofByteArray(packData))
                         .build();
                 HttpResponse<Void> response = httpClient.send(request, HttpResponse.BodyHandlers.discarding());
@@ -118,7 +140,11 @@ public class RemoteClient {
         } else {
             return executeWithRetry(() -> {
                 URI uri = URI.create(remoteUrl + "packs/" + packId + ".dfpack");
-                HttpRequest request = HttpRequest.newBuilder().uri(uri).GET().build();
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(uri)
+                        .timeout(java.time.Duration.ofSeconds(30))
+                        .GET()
+                        .build();
                 HttpResponse<byte[]> response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
                 if (response.statusCode() != 200) {
                     throw new IOException("Failed to download remote pack: HTTP " + response.statusCode());
@@ -138,12 +164,20 @@ public class RemoteClient {
         if (remoteUrl.startsWith("file://")) {
             Path indexPath = getLocalPath("pack.index");
             Files.createDirectories(indexPath.getParent());
-            Files.writeString(indexPath, content);
+            Path tempPath = indexPath.getParent().resolve(indexPath.getFileName().toString() + ".tmp_" + java.util.UUID.randomUUID());
+            try {
+                Files.writeString(tempPath, content);
+                Files.move(tempPath, indexPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            } catch (IOException e) {
+                Files.deleteIfExists(tempPath);
+                throw e;
+            }
         } else {
             executeWithRetry(() -> {
                 URI uri = URI.create(remoteUrl + "pack.index");
                 HttpRequest request = HttpRequest.newBuilder()
                         .uri(uri)
+                        .timeout(java.time.Duration.ofSeconds(15))
                         .PUT(HttpRequest.BodyPublishers.ofString(content))
                         .build();
                 HttpResponse<Void> response = httpClient.send(request, HttpResponse.BodyHandlers.discarding());
@@ -168,7 +202,11 @@ public class RemoteClient {
         } else {
             content = executeWithRetry(() -> {
                 URI uri = URI.create(remoteUrl + "pack.index");
-                HttpRequest request = HttpRequest.newBuilder().uri(uri).GET().build();
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(uri)
+                        .timeout(java.time.Duration.ofSeconds(15))
+                        .GET()
+                        .build();
                 HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
                 if (response.statusCode() == 404) {
                     return "";

@@ -27,11 +27,17 @@ public class GitIgnoreMatcher {
             }
         }
 
+        // Load .dfignore exclusions
+        loadIgnoreFile(rootDir.resolve(".dfignore"));
+
         // Load .gitignore exclusions
-        Path gitIgnorePath = rootDir.resolve(".gitignore");
-        if (Files.exists(gitIgnorePath)) {
+        loadIgnoreFile(rootDir.resolve(".gitignore"));
+    }
+
+    private void loadIgnoreFile(Path ignorePath) {
+        if (Files.exists(ignorePath)) {
             try {
-                List<String> lines = Files.readAllLines(gitIgnorePath);
+                List<String> lines = Files.readAllLines(ignorePath);
                 for (String line : lines) {
                     String trimmed = line.trim();
                     if (trimmed.isEmpty() || trimmed.startsWith("#")) {

@@ -151,41 +151,78 @@ public class LineMerge {
     }
 
     /**
-     * Helper to find edits from base to target using dynamic programming LCS.
+     * Helper to find edits from base to target using dynamic programming LCS with prefix/suffix trimming.
      */
     public static List<Edit> diff(List<String> base, List<String> target) {
         int m = base.size();
         int n = target.size();
-        int[][] dp = new int[m + 1][n + 1];
 
-        for (int i = 1; i <= m; i++) {
-            for (int j = 1; j <= n; j++) {
-                if (base.get(i - 1).equals(target.get(j - 1))) {
-                    dp[i][j] = dp[i - 1][j - 1] + 1;
-                } else {
-                    dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+        // 1. Find common prefix
+        int prefixLen = 0;
+        while (prefixLen < m && prefixLen < n && base.get(prefixLen).equals(target.get(prefixLen))) {
+            prefixLen++;
+        }
+
+        // 2. Find common suffix
+        int suffixLen = 0;
+        while (suffixLen < m - prefixLen && suffixLen < n - prefixLen 
+               && base.get(m - 1 - suffixLen).equals(target.get(n - 1 - suffixLen))) {
+            suffixLen++;
+        }
+
+        // 3. Middle sublists that differ
+        List<String> baseMid = base.subList(prefixLen, m - suffixLen);
+        List<String> targetMid = target.subList(prefixLen, n - suffixLen);
+
+        int midM = baseMid.size();
+        int midN = targetMid.size();
+
+        List<Edit> middleEdits = new ArrayList<>();
+        if (midM > 0 || midN > 0) {
+            // Guard limit to prevent OutOfMemory on extremely divergent inputs
+            if ((long) midM * midN > 25_000_000L) {
+                throw new IllegalArgumentException("Files are too divergent to diff cleanly. Diff complexity exceeds maximum allowed threshold.");
+            }
+
+            int[][] dp = new int[midM + 1][midN + 1];
+            for (int i = 1; i <= midM; i++) {
+                for (int j = 1; j <= midN; j++) {
+                    if (baseMid.get(i - 1).equals(targetMid.get(j - 1))) {
+                        dp[i][j] = dp[i - 1][j - 1] + 1;
+                    } else {
+                        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+                    }
                 }
             }
-        }
 
-        List<Edit> edits = new ArrayList<>();
-        int i = m, j = n;
-
-        while (i > 0 || j > 0) {
-            if (i > 0 && j > 0 && base.get(i - 1).equals(target.get(j - 1))) {
-                edits.add(new Edit(EditType.KEEP, i - 1, base.get(i - 1)));
-                i--;
-                j--;
-            } else if (j > 0 && (i == 0 || dp[i][j - 1] >= dp[i - 1][j])) {
-                edits.add(new Edit(EditType.INSERT, i, target.get(j - 1)));
-                j--;
-            } else {
-                edits.add(new Edit(EditType.DELETE, i - 1, base.get(i - 1)));
-                i--;
+            int i = midM, j = midN;
+            while (i > 0 || j > 0) {
+                if (i > 0 && j > 0 && baseMid.get(i - 1).equals(targetMid.get(j - 1))) {
+                    middleEdits.add(new Edit(EditType.KEEP, prefixLen + i - 1, baseMid.get(i - 1)));
+                    i--;
+                    j--;
+                } else if (j > 0 && (i == 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+                    middleEdits.add(new Edit(EditType.INSERT, prefixLen + i, targetMid.get(j - 1)));
+                    j--;
+                } else {
+                    middleEdits.add(new Edit(EditType.DELETE, prefixLen + i - 1, baseMid.get(i - 1)));
+                    i--;
+                }
             }
+            Collections.reverse(middleEdits);
         }
 
-        Collections.reverse(edits);
+        // 4. Reconstruct full edits list: Prefix + Middle + Suffix
+        List<Edit> edits = new ArrayList<>(prefixLen + middleEdits.size() + suffixLen);
+        for (int k = 0; k < prefixLen; k++) {
+            edits.add(new Edit(EditType.KEEP, k, base.get(k)));
+        }
+        edits.addAll(middleEdits);
+        for (int k = 0; k < suffixLen; k++) {
+            int baseIdx = m - suffixLen + k;
+            edits.add(new Edit(EditType.KEEP, baseIdx, base.get(baseIdx)));
+        }
+
         return edits;
     }
 }

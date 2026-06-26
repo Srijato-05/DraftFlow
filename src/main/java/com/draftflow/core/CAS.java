@@ -116,6 +116,12 @@ public class CAS {
             case REVISION -> Revision.deserialize(payload);
             case CONFLICT -> ConflictNode.deserialize(payload);
             case CHUNK_TREE -> ChunkTree.deserialize(payload);
+            case DELTA_BLOB -> {
+                DeltaBlob deltaBlob = DeltaBlob.deserialize(payload);
+                Blob baseBlob = (Blob) readObject(deltaBlob.getBaseBlobHash());
+                byte[] targetBytes = BinaryDelta.decompress(baseBlob.getContent(), deltaBlob.getDeltaBytes());
+                yield new Blob(targetBytes);
+            }
         };
     }
 
@@ -123,6 +129,13 @@ public class CAS {
         String dir = hash.substring(0, 2);
         String file = hash.substring(2);
         return objectsDir.resolve(dir).resolve(file);
+    }
+
+    public boolean exists(String hash) {
+        if (hash == null || hash.length() < 4) {
+            return false;
+        }
+        return Files.exists(getObjectPath(hash));
     }
 
     public Path getRootDir() {
@@ -255,5 +268,23 @@ public class CAS {
             return null;
         }
         return null;
+    }
+
+    public String writeBlobWithDelta(byte[] content, String baseBlobHash) throws IOException {
+        if (baseBlobHash == null) {
+            return writeObject(new Blob(content));
+        }
+        try {
+            Blob baseBlob = (Blob) readObject(baseBlobHash);
+            byte[] baseBytes = baseBlob.getContent();
+            byte[] deltaBytes = BinaryDelta.compress(baseBytes, content);
+            if (deltaBytes.length < content.length * 0.7) {
+                DeltaBlob deltaBlob = new DeltaBlob(baseBlobHash, deltaBytes);
+                return writeObject(deltaBlob);
+            }
+        } catch (Exception e) {
+            // Fallback to normal blob write on error
+        }
+        return writeObject(new Blob(content));
     }
 }

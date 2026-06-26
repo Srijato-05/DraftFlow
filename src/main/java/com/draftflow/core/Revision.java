@@ -17,8 +17,14 @@ public class Revision implements DraftFlowObject {
     private final long timestamp;
     private final String message;
     private final boolean draft; // Indicates if this is a background shadow commit
+    private final String signature; // Base64 signature
+    private final String publicKey; // Base64 public key
 
     public Revision(String treeHash, List<String> parentHashes, String changeId, String author, long timestamp, String message, boolean draft) {
+        this(treeHash, parentHashes, changeId, author, timestamp, message, draft, null, null);
+    }
+
+    public Revision(String treeHash, List<String> parentHashes, String changeId, String author, long timestamp, String message, boolean draft, String signature, String publicKey) {
         this.treeHash = treeHash;
         this.parentHashes = parentHashes != null ? new ArrayList<>(parentHashes) : new ArrayList<>();
         this.changeId = changeId != null ? changeId : UUID.randomUUID().toString();
@@ -26,6 +32,8 @@ public class Revision implements DraftFlowObject {
         this.timestamp = timestamp > 0 ? timestamp : System.currentTimeMillis();
         this.message = message != null ? message : "";
         this.draft = draft;
+        this.signature = signature;
+        this.publicKey = publicKey;
     }
 
     public String getTreeHash() {
@@ -54,6 +62,31 @@ public class Revision implements DraftFlowObject {
 
     public boolean isDraft() {
         return draft;
+    }
+
+    public String getSignature() {
+        return signature;
+    }
+
+    public String getPublicKey() {
+        return publicKey;
+    }
+
+    public byte[] getSigningData() {
+        StringBuilder sb = new StringBuilder();
+        sb.append(treeHash != null ? treeHash : "").append("\n");
+        if (parentHashes != null) {
+            for (String p : parentHashes) {
+                sb.append(p).append(",");
+            }
+        }
+        sb.append("\n");
+        sb.append(changeId != null ? changeId : "").append("\n");
+        sb.append(author != null ? author : "").append("\n");
+        sb.append(timestamp).append("\n");
+        sb.append(message != null ? message : "").append("\n");
+        sb.append(draft).append("\n");
+        return sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
     }
 
     @Override

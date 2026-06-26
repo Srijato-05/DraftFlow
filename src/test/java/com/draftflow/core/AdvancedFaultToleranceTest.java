@@ -65,6 +65,22 @@ public class AdvancedFaultToleranceTest {
     }
 
     @Test
+    public void testDFIgnoreMatcher() throws Exception {
+        // Write a mock .dfignore
+        Path dfignore = tempDir.resolve(".dfignore");
+        Files.writeString(dfignore, "# Comments\n\ntemp/\n*.tmp\n");
+
+        GitIgnoreMatcher matcher = new GitIgnoreMatcher(tempDir, null);
+
+        // Checked files
+        assertTrue(matcher.isIgnored(tempDir.resolve("temp/file.txt")), "temp/ folder should be ignored via .dfignore");
+        assertTrue(matcher.isIgnored(tempDir.resolve("run.tmp")), "*.tmp should be ignored via .dfignore");
+
+        // Allowed files
+        assertFalse(matcher.isIgnored(tempDir.resolve("temp.txt")), "temp.txt should NOT be ignored");
+    }
+
+    @Test
     public void testDatabaseShutdownHookAndAutoRecovery() throws Exception {
         Path dbPath = tempDir.resolve("index").resolve("index.mv.db");
         

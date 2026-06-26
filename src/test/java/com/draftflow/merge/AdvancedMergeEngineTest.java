@@ -182,4 +182,32 @@ public class AdvancedMergeEngineTest {
         assertTrue(chunkTree.getTotalSize() > 1024 * 1024);
         assertTrue(chunkTree.getChunkHashes().size() > 1);
     }
+
+    @Test
+    public void testPrefixSuffixTrimmingPerformance() {
+        // Create base list with 10,000 lines
+        List<String> base = new ArrayList<>();
+        for (int i = 0; i < 10000; i++) {
+            base.add("Standard line item number " + i);
+        }
+
+        // Ours modifies only line 5000
+        List<String> ours = new ArrayList<>(base);
+        ours.set(5000, "Ours modified line 5000");
+
+        // Theirs modifies only line 5002
+        List<String> theirs = new ArrayList<>(base);
+        theirs.set(5002, "Theirs modified line 5002");
+
+        // Time the merge: middle segment should be trimmed down to 3 lines (index 5000 to 5002).
+        long start = System.currentTimeMillis();
+        LineMerge.MergeResult result = LineMerge.merge(base, ours, theirs);
+        long elapsed = System.currentTimeMillis() - start;
+
+        assertTrue(result.clean, "Merge should be clean");
+        assertTrue(elapsed < 200, "Merge took too long: " + elapsed + "ms. Prefix/suffix trimming optimization failed.");
+        assertEquals("Ours modified line 5000", result.mergedLines.get(5000));
+        assertEquals("Standard line item number 5001", result.mergedLines.get(5001));
+        assertEquals("Theirs modified line 5002", result.mergedLines.get(5002));
+    }
 }
