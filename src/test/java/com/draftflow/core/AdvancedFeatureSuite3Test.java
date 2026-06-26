@@ -351,11 +351,4 @@ public class AdvancedFeatureSuite3Test {
         }
         return hash;
     }
-
-    private String getPermanentParent(String hash, CAS cas) throws Exception {
-        String permHash = getPermanentHash(hash, cas);
-        Revision r = (Revision) cas.readObject(permHash);
-        if (r.getParentHashes().isEmpty()) return null;
-        return getPermanentHash(r.getParentHashes().get(0), cas);
-    }
 }
