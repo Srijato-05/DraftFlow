@@ -350,6 +350,16 @@ public class UiServer {
         String activeRev = db.getConfig("activeRevisionHash");
         String activeChange = db.getConfig("activeChangeId");
 
+        List<String> branches = new ArrayList<>();
+        for (String name : db.getRefNames()) {
+            if (name.startsWith("heads/")) {
+                branches.add(name.replace("heads/", ""));
+            }
+        }
+        if (branches.isEmpty()) {
+            branches.add("main");
+        }
+
         List<FileMetadata> tracked = db.getAllFiles();
         List<String> trackedPaths = new ArrayList<>();
         for (FileMetadata file : tracked) {
@@ -483,6 +493,7 @@ public class UiServer {
 
         return String.format(
                 "{\"activeHead\":\"%s\",\"activeRevision\":\"%s\",\"activeChangeId\":\"%s\"," +
+                        "\"branches\":%s," +
                         "\"modified\":%s,\"deleted\":%s,\"conflicts\":%s,\"untracked\":%s," +
                         "\"trackedFiles\":%s," +
                         "\"workspaceName\":\"%s\",\"repositories\":%s,\"casSize\":%d," +
@@ -492,6 +503,7 @@ public class UiServer {
                 activeHead != null ? activeHead.replace("heads/", "") : "detached",
                 activeRev != null ? activeRev : "",
                 activeChange != null ? activeChange : "",
+                toJsonArray(branches),
                 toJsonArray(modified),
                 toJsonArray(deleted),
                 toJsonArray(conflicts),
