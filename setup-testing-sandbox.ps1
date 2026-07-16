@@ -118,7 +118,7 @@ $hooksDir = Join-Path $sandboxDir ".draftflow/hooks"
 # pre-commit hook that rejects commit if any file contains "TODO_CHECK_FAILED"
 Set-Content -Path (Join-Path $hooksDir "pre-commit.bat") -Value @"
 @echo off
-findstr /s /m "TODO_CHECK_FAILED" *
+findstr /s /m "TODO_CHECK_FAILED" * 2>nul | findstr /v /i "\.draftflow" >nul
 if %errorlevel%==0 (
     echo [Hook Error] Commit rejected: Files contain TODO_CHECK_FAILED
     exit /b 1

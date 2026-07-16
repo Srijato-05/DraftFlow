@@ -267,7 +267,7 @@ Assert-Test "Repository pre-commit Hook Blocking" {
     $hooksDir = Join-Path $testDir ".draftflow/hooks"
     Set-Content -Path (Join-Path $hooksDir "pre-commit.bat") -Value @"
 @echo off
-findstr /s /m "TODO_CHECK_FAILED" * >nul
+findstr /s /m "TODO_CHECK_FAILED" * 2>nul | findstr /v /i "\.draftflow" >nul
 if %errorlevel%==0 (
     echo [Hook Alert] Blocked by pre-commit hook!
     exit /b 1
