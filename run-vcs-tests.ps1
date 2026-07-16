@@ -34,9 +34,8 @@ if (!(Get-Command "javac" -ErrorAction SilentlyContinue)) {
 # 1. Compile Java files
 Write-Host "[*] Compiling backend Java files..." -ForegroundColor Yellow
 $javaFiles = Get-ChildItem -Path (Join-Path $projectRoot "src/main/java") -Filter *.java -Recurse | ForEach-Object { $_.FullName }
-$argsArray = @("-cp", $cp, "-d", (Join-Path $projectRoot "target/classes")) + $javaFiles
-$javacResult = Start-Process -FilePath "javac" -ArgumentList $argsArray -NoNewWindow -PassThru -Wait
-if ($javacResult.ExitCode -ne 0) {
+& javac -cp $cp -d (Join-Path $projectRoot "target/classes") $javaFiles
+if ($LASTEXITCODE -ne 0) {
     Write-Error "Java compilation failed. Cannot run test suite."
 }
 Write-Host "[OK] Compilation successful." -ForegroundColor Green
