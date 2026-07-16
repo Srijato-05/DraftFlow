@@ -64,7 +64,7 @@ function Invoke-DraftFlow {
     Set-Location $testDir
     
     $oldPreference = $ErrorActionPreference
-    $ErrorActionPreference = "SilentlyContinue"
+    $ErrorActionPreference = "Continue"
     try {
         if ($Stdin) {
             $output = $Stdin | & java -cp $cp com.draftflow.DraftFlow $ArgsList 2>&1
