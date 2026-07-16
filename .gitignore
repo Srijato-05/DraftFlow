@@ -1,0 +1,16 @@
+# Java build outputs
+target/
+*.class
+
+# Node / Frontend dependencies & outputs
+fontend/node_modules/
+fontend/dist/
+*.log
+
+# DraftFlow custom VCS database
+.draftflow/
+
+# OS metadata files
+Thumbs.db
+Desktop.ini
+.DS_Store
