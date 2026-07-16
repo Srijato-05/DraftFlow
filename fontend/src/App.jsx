@@ -341,7 +341,13 @@ function AppRoutes({ theme, onThemeChange }) {
       />
       <Route
         path="/repositories"
-        element={<RepositoriesPage />}
+        element={
+          <ProtectedRoute user={user}>
+            <AppLayout user={user} onLogout={handleLogout} theme={theme} onThemeChange={onThemeChange}>
+              <RepositoriesPage />
+            </AppLayout>
+          </ProtectedRoute>
+        }
      />
       <Route
         path="/repos"

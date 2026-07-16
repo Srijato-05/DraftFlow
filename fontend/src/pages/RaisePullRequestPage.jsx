@@ -8,7 +8,7 @@ export default function RaisePullRequestPage() {
   const navigate = useNavigate();
   const { selectedRepo } = useRepo();
 
-  const branches = selectedRepo?.branches || ["main", "feature/auth", "develop", "feature/ui"];
+  const branches = selectedRepo?.branches || ["main"];
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");

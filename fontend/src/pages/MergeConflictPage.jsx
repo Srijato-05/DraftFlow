@@ -5,7 +5,7 @@ import { useRepo } from '../context/RepoContext'
 
 function MergeConflictPage() {
   const { repoId } = useParams()
-  const { selectedRepo, fetchRepoDetails } = useRepo()
+  const { selectedRepo, selectRepository } = useRepo()
   const [conflicts, setConflicts] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
@@ -56,8 +56,8 @@ function MergeConflictPage() {
         method: "POST"
       })
       if (res.ok) {
-        if (fetchRepoDetails && selectedRepo) {
-          await fetchRepoDetails(selectedRepo)
+        if (selectRepository && selectedRepo) {
+          await selectRepository(selectedRepo)
         }
       } else {
         const err = await res.json()

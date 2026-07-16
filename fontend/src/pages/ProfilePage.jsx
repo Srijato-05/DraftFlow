@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { CalendarDays, Github, Mail, MapPin, UserCircle2 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
+import { useRepo } from '../context/RepoContext'
 
 const fieldLabels = {
   name: 'Full Name',
@@ -19,6 +20,7 @@ const fieldLabels = {
 
 function ProfilePage() {
   const { user, updateProfile } = useAuth()
+  const { repositories, selectedRepo } = useRepo()
   const [isEditing, setIsEditing] = useState(false)
   const [form, setForm] = useState({
     name: user?.name || '',
@@ -29,8 +31,6 @@ function ProfilePage() {
     domain: user?.domain || '',
     experience: user?.experience || '',
     preferredTheme: user?.preferredTheme || 'dark',
-    currentBranch: user?.currentBranch || '',
-    currentRepository: user?.currentRepository || '',
   })
 
   const profileItems = useMemo(() => {
@@ -43,16 +43,16 @@ function ProfilePage() {
       ['username', user.username],
       ['email', user.email],
       ['age', user.age || 'Not set'],
-      ['country', user.country],
-      ['domain', user.domain],
-      ['experience', user.experience],
+      ['country', user.country || 'Not set'],
+      ['domain', user.domain || 'Not set'],
+      ['experience', user.experience || 'Not set'],
       ['preferredTheme', user.preferredTheme],
       ['joinedDate', new Date(user.joinedDate).toLocaleDateString()],
-      ['repositoryCount', user.repositoryCount],
-      ['currentBranch', user.currentBranch],
-      ['currentRepository', user.currentRepository],
+      ['repositoryCount', repositories?.length ?? 0],
+      ['currentBranch', selectedRepo?.currentBranch || 'detached'],
+      ['currentRepository', selectedRepo?.name || 'No active repository'],
     ]
-  }, [user])
+  }, [user, repositories, selectedRepo])
 
   if (!user) {
     return null
@@ -74,8 +74,6 @@ function ProfilePage() {
       domain: form.domain,
       experience: form.experience,
       preferredTheme: form.preferredTheme,
-      currentBranch: form.currentBranch,
-      currentRepository: form.currentRepository,
     })
     setIsEditing(false)
   }
@@ -144,14 +142,7 @@ function ProfilePage() {
                 <option value="system">System</option>
               </select>
             </label>
-            <label className="text-sm text-slate-700 dark:text-slate-300">
-              <span className="mb-2 block">Current Branch</span>
-              <input name="currentBranch" value={form.currentBranch} onChange={handleChange} className="w-full rounded-2xl border border-slate-300 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-cyan-500 dark:border-slate-700 dark:bg-slate-950" />
-            </label>
-            <label className="text-sm text-slate-700 dark:text-slate-300">
-              <span className="mb-2 block">Current Repository</span>
-              <input name="currentRepository" value={form.currentRepository} onChange={handleChange} className="w-full rounded-2xl border border-slate-300 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-cyan-500 dark:border-slate-700 dark:bg-slate-950" />
-            </label>
+            {/* Read-only system values shown below, not editable as profile properties */}
           </div>
 
           <div className="mt-6 flex justify-end">

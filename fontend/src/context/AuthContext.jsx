@@ -13,19 +13,16 @@ function buildProfile(account = {}) {
     username,
     email,
     password: account.password || '',
-    avatar: account.avatar || 'mock-avatar',
+    avatar: account.avatar || 'D',
     age: account.age ?? '',
-    country: account.country || 'United States',
-    domain: account.domain || 'Full Stack',
-    experience: account.experience || 'Intermediate',
+    country: account.country || '',
+    domain: account.domain || '',
+    experience: account.experience || '',
     preferredTheme: account.preferredTheme || 'dark',
     technologies: account.technologies || [],
     interests: account.interests || [],
     rememberMe: Boolean(account.rememberMe),
     joinedDate: account.joinedDate || new Date().toISOString(),
-    repositoryCount: account.repositoryCount ?? 12,
-    currentBranch: account.currentBranch || 'main',
-    currentRepository: account.currentRepository || 'snapshot-vcs',
   }
 }
 

@@ -41,16 +41,37 @@ function RepoListPage({ user }) {
     { label: 'Review Merge', path: selectedRepo ? `/repo/${selectedRepo.id}/merge` : '/repos' },
   ]
 
-  const recentActivity = [
-    { title: 'Merged feature/auth-flow', time: '12m ago', detail: 'into main' },
-    { title: 'Resolved conflict in diff view', time: '32m ago', detail: 'reviewed two files' },
-    { title: 'Branch switched to release/1.2', time: '1h ago', detail: 'ready for rollout' },
-  ]
+  const recentActivity = useMemo(() => {
+    if (!selectedRepo?.commits || selectedRepo.commits.length === 0) {
+      return [{ title: 'No workspace activity yet', time: 'now', detail: 'Start committing to see history' }]
+    }
+    return selectedRepo.commits.slice(0, 3).map(c => ({
+      title: `Saved snapshot: ${c.message}`,
+      time: c.timestamp ? new Date(c.timestamp).toLocaleDateString() : 'recently',
+      detail: `by ${c.author || 'Developer'} (${c.id.slice(0, 8)})`
+    }))
+  }, [selectedRepo?.commits])
 
-  const notifications = [
-    { title: 'CI checks passed', detail: 'Snapshot build completed successfully' },
-    { title: 'New review request', detail: 'Team asked for feedback on the latest patch' },
-  ]
+  const notifications = useMemo(() => {
+    const list = []
+    if (selectedRepo?.conflicts && selectedRepo.conflicts.length > 0) {
+      selectedRepo.conflicts.forEach(f => {
+        list.push({ title: 'Conflict detected', detail: `${f} requires manual resolution` })
+      })
+    }
+    const modifiedFiles = selectedRepo?.files?.filter(f => f.status === 'modified') || []
+    if (modifiedFiles.length > 0) {
+      list.push({ title: 'Changes pending', detail: `${modifiedFiles.length} file(s) modified. Use Save to snapshot.` })
+    }
+    const untrackedFiles = selectedRepo?.files?.filter(f => f.status === 'untracked') || []
+    if (untrackedFiles.length > 0) {
+      list.push({ title: 'Untracked files', detail: `${untrackedFiles.length} new file(s) found in repository` })
+    }
+    if (list.length === 0) {
+      list.push({ title: 'Workspace up to date', detail: 'All files match the latest snapshot' })
+    }
+    return list.slice(0, 3)
+  }, [selectedRepo])
 
   const handleOpenRepo = (repo) => {
     setSelectedRepo(repo)

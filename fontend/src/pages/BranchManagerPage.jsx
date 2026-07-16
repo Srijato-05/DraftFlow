@@ -6,7 +6,7 @@ import { useRepo } from '../context/RepoContext'
 
 function BranchManagerPage() {
   const { repoId } = useParams()
-  const { selectedRepo, switchBranch, fetchRepoDetails } = useRepo()
+  const { selectedRepo, switchBranch, selectRepository } = useRepo()
   const [branches, setBranches] = useState(() => selectedRepo?.branches ?? [])
   const [currentBranch, setCurrentBranch] = useState(() => selectedRepo?.currentBranch ?? 'main')
   const [newBranch, setNewBranch] = useState('')
@@ -40,8 +40,8 @@ function BranchManagerPage() {
       })
       if (res.ok) {
         setNewBranch('')
-        if (fetchRepoDetails) {
-          await fetchRepoDetails(repo)
+        if (selectRepository) {
+          await selectRepository(repo)
         }
       } else {
         const err = await res.json()

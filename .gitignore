@@ -14,3 +14,9 @@ fontend/dist/
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# VCS Test sandboxes & output logs
+df-test-workspace/
+vcs-advanced-sandbox/
+stdout.txt
+stderr.txt
