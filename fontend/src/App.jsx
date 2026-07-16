@@ -155,10 +155,10 @@ function AppLayout({ user, onLogout, theme, onThemeChange, children }) {
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(125,211,252,0.18),transparent_28%),linear-gradient(135deg,#f8fafc_0%,#eef2ff_100%)] text-slate-900 transition-colors duration-300 dark:bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.16),transparent_28%),linear-gradient(135deg,#020617_0%,#111827_100%)] dark:text-slate-100">
       <div className="mx-auto flex min-h-screen max-w-7xl gap-4 px-3 py-3 sm:px-4 lg:px-6">
-        <aside className={`hidden lg:flex flex-col rounded-[28px] border border-slate-200/70 bg-white/80 p-4 shadow-[0_20px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl transition-all duration-300 dark:border-slate-800 dark:bg-slate-900/80 ${sidebarCollapsed ? 'w-24' : 'w-72'}`}>
-          <div className="flex items-center justify-between">
+        <aside className={`hidden lg:flex flex-col rounded-[28px] border border-slate-200/70 bg-white/80 shadow-[0_20px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl transition-all duration-300 dark:border-slate-800 dark:bg-slate-900/80 ${sidebarCollapsed ? 'w-20 p-3' : 'w-72 p-4'}`}>
+          <div className={`flex ${sidebarCollapsed ? 'flex-col gap-3 items-center' : 'items-center justify-between'}`}>
             <div className={`flex items-center gap-3 ${sidebarCollapsed ? 'justify-center' : ''}`}>
-              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-950 text-sm font-semibold text-white shadow-lg dark:bg-cyan-500/20 dark:text-cyan-300">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-950 text-sm font-semibold text-white shadow-lg dark:bg-cyan-500/20 dark:text-cyan-300">
                 V
               </div>
               {!sidebarCollapsed ? (
@@ -178,17 +178,19 @@ function AppLayout({ user, onLogout, theme, onThemeChange, children }) {
             </button>
           </div>
 
-          <div className="mt-6 rounded-2xl border border-slate-200/70 bg-slate-50/80 p-3 dark:border-slate-800 dark:bg-slate-950/70">
-            <div className="flex items-center gap-2 text-sm font-medium text-slate-600 dark:text-slate-300">
-              <FolderGit2 size={16} className="text-cyan-500" />
-              {!sidebarCollapsed ? 'Quick switch' : 'Repos'}
+          {!sidebarCollapsed ? (
+            <div className="mt-6 rounded-2xl border border-slate-200/70 bg-slate-50/80 p-3 dark:border-slate-800 dark:bg-slate-950/70">
+              <div className="flex items-center gap-2 text-sm font-medium text-slate-600 dark:text-slate-300">
+                <FolderGit2 size={16} className="text-cyan-500" />
+                <span>Quick switch</span>
+              </div>
+              <div className="mt-3 rounded-xl border border-slate-200/70 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
+                {selectedRepo ? selectedRepo.name : 'No repository selected'}
+              </div>
             </div>
-            <div className="mt-3 rounded-xl border border-slate-200/70 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
-              {selectedRepo ? selectedRepo.name : 'No repository selected'}
-            </div>
-          </div>
+          ) : null}
 
-          <nav className="mt-6 flex-1 space-y-1">
+          <nav className={`mt-6 flex-1 ${sidebarCollapsed ? 'space-y-3' : 'space-y-1'}`}>
             {workflowLinks.map((link) => {
               const isActive = checkIsActive(link)
               const Icon = link.icon
@@ -196,7 +198,9 @@ function AppLayout({ user, onLogout, theme, onThemeChange, children }) {
                 <Link
                   key={link.label}
                   to={link.to}
-                  className={`flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-medium transition ${
+                  className={`flex items-center rounded-2xl py-2.5 text-sm font-medium transition ${
+                    sidebarCollapsed ? 'justify-center px-0 w-11 h-11 mx-auto' : 'gap-3 px-3'
+                  } ${
                     isActive
                       ? 'bg-cyan-500/15 text-cyan-600 shadow-sm dark:bg-cyan-500/20 dark:text-cyan-300'
                       : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white'
@@ -210,9 +214,9 @@ function AppLayout({ user, onLogout, theme, onThemeChange, children }) {
             })}
           </nav>
 
-          <div className="rounded-2xl border border-slate-200/70 bg-slate-50/80 p-3 dark:border-slate-800 dark:bg-slate-950/70">
+          <div className={`rounded-2xl border border-slate-200/70 bg-slate-50/80 dark:border-slate-800 dark:bg-slate-950/70 ${sidebarCollapsed ? 'p-2 flex justify-center' : 'p-3'}`}>
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-900 text-sm font-semibold text-white dark:bg-slate-800">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-900 text-sm font-semibold text-white dark:bg-slate-800">
                 {user?.name?.slice(0, 1).toUpperCase() ?? 'D'}
               </div>
               {!sidebarCollapsed ? (
