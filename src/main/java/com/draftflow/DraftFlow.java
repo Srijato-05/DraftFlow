@@ -1211,6 +1211,10 @@ public class DraftFlow implements Callable<Integer> {
                     db.open();
                     if (newBranch != null) {
                         String head = db.getConfig("activeRevisionHash");
+                        if (head == null) {
+                            System.err.println("Fatal: Cannot create a branch because there are no commits in the repository yet. Save a commit first.");
+                            return 1;
+                        }
                         db.setRef("heads/" + newBranch, head);
                         db.commit();
                         System.out.println("Created branch: " + newBranch);
