@@ -236,7 +236,7 @@ function AppLayout({ user, onLogout, theme, onThemeChange, children }) {
 
         <div className="flex min-h-[calc(100vh-1.5rem)] flex-1 flex-col">
           <header className="sticky top-3 z-20 rounded-3xl border border-slate-200/70 bg-white/80 px-4 py-3 shadow-[0_14px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 sm:px-5">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div className="flex flex-wrap items-center gap-3">
                 <button
                   type="button"
@@ -252,36 +252,48 @@ function AppLayout({ user, onLogout, theme, onThemeChange, children }) {
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+              <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
                 <label className="flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500 shadow-sm dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-400">
-                  <Search size={16} />
+                  <Search size={16} className="text-slate-400" />
                   <input
                     aria-label="Global search"
                     placeholder="Search"
-                    className="w-28 bg-transparent outline-none sm:w-40"
+                    className="w-20 bg-transparent outline-none transition-all duration-200 focus:w-32 sm:w-32 sm:focus:w-44"
                   />
                 </label>
-                <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-300">
-                  <GitBranch size={16} className="text-cyan-500" />
-                  {selectedRepo?.currentBranch ?? 'main'}
-                </div>
-                <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-300">
-                  <Activity size={16} className="text-emerald-500" />
-                  Snapshot ready
-                </div>
-                <button type="button" className="rounded-full border border-slate-200 bg-white p-2.5 text-slate-600 transition hover:border-cyan-500 hover:text-cyan-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300" aria-label="Notifications">
+
+                {location.pathname.startsWith('/repo/') && selectedRepo ? (
+                  <>
+                    <div className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-300">
+                      <GitBranch size={14} className="text-cyan-500" />
+                      <span className="font-medium">{selectedRepo.currentBranch ?? 'main'}</span>
+                    </div>
+                    <div className="hidden sm:flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-300">
+                      <Activity size={14} className="text-emerald-500 animate-pulse" />
+                      <span>Ready</span>
+                    </div>
+                  </>
+                ) : null}
+
+                <div className="hidden sm:block h-6 w-[1px] bg-slate-200 dark:bg-slate-800" />
+
+                <button type="button" className="rounded-full border border-slate-200 bg-white p-2 text-slate-500 transition hover:border-cyan-500 hover:text-cyan-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400" aria-label="Notifications">
                   <BellRing size={16} />
                 </button>
-                <button type="button" onClick={onThemeChange} className="rounded-full border border-slate-200 bg-white p-2.5 text-slate-600 transition hover:border-cyan-500 hover:text-cyan-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300" aria-label="Toggle theme">
+                <button type="button" onClick={onThemeChange} className="rounded-full border border-slate-200 bg-white p-2 text-slate-500 transition hover:border-cyan-500 hover:text-cyan-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400" aria-label="Toggle theme">
                   {themeIcon}
                 </button>
-                <Link to="/profile" className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-cyan-500 hover:text-cyan-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
-                  <UserCircle2 size={18} />
-                  {user?.name ?? 'Dev'}
+
+                <div className="h-6 w-[1px] bg-slate-200 dark:bg-slate-800" />
+
+                <Link to="/profile" className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 transition hover:border-cyan-500 hover:text-cyan-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                  <UserCircle2 size={16} className="text-slate-400" />
+                  <span className="hidden md:inline">{user?.name ?? 'Dev'}</span>
                 </Link>
-                <Link to="/repositories/new" className="inline-flex items-center gap-2 rounded-full bg-slate-950 px-3 py-2 text-sm font-semibold text-white transition hover:bg-cyan-600 dark:bg-cyan-500/90 dark:text-slate-950" >
-                    <Plus size={16} />
-                   Create Repository
+
+                <Link to="/repositories/new" className="inline-flex items-center justify-center gap-1.5 rounded-full bg-slate-950 px-3 py-2 text-sm font-semibold text-white transition hover:bg-cyan-600 dark:bg-cyan-500/90 dark:text-slate-950 shadow-sm" title="Create Repository">
+                  <Plus size={16} />
+                  <span className="hidden sm:inline">Create Repo</span>
                 </Link>
               </div>
             </div>
