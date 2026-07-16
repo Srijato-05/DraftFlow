@@ -87,6 +87,21 @@ public class UiServer {
         return port;
     }
 
+    private int executeCommandWithDbClosed(java.util.concurrent.Callable<Integer> cmd) throws Exception {
+        synchronized (this) {
+            if (db != null) {
+                db.close();
+            }
+            try {
+                return cmd.call();
+            } finally {
+                Path dbPath = cas.getDraftFlowDir().resolve("index").resolve("index.mv.db");
+                db = new MetadataStore(dbPath);
+                db.open();
+            }
+        }
+    }
+
     // --- HANDLERS ---
 
     private class IndexHandler implements HttpHandler {
@@ -1534,12 +1549,12 @@ public class UiServer {
                     fIgnored.setAccessible(true);
                     fIgnored.set(clean, true);
 
-                    int res = clean.call();
+                    int res = executeCommandWithDbClosed(clean);
                     if (res != 0) throw new RuntimeException("Clean returned code: " + res);
                     message = "Workspace successfully swept clean of all untracked files and directories!";
                 } else if (cmd.equals("undo")) {
                     com.draftflow.DraftFlow.UndoCmd undo = new com.draftflow.DraftFlow.UndoCmd();
-                    int res = undo.call();
+                    int res = executeCommandWithDbClosed(undo);
                     if (res != 0) throw new RuntimeException("Undo returned code: " + res);
                     message = "Successfully undid last commit!";
                 } else if (cmd.equals("select-repo")) {
@@ -1573,7 +1588,7 @@ public class UiServer {
                     java.lang.reflect.Field fRev = sw.getClass().getDeclaredField("revisionHash");
                     fRev.setAccessible(true);
                     fRev.set(sw, target);
-                    int res = sw.call();
+                    int res = executeCommandWithDbClosed(sw);
                     if (res != 0) throw new RuntimeException("Switch returned code: " + res);
                     message = "Successfully checked out " + target;
                 } else if (cmd.equals("save")) {
@@ -1585,7 +1600,7 @@ public class UiServer {
                     java.lang.reflect.Field fMsg = save.getClass().getDeclaredField("message");
                     fMsg.setAccessible(true);
                     fMsg.set(save, msg);
-                    int res = save.call();
+                    int res = executeCommandWithDbClosed(save);
                     if (res != 0) throw new RuntimeException("Save returned code: " + res);
                     message = "Changes successfully saved with message: " + msg;
                 } else if (cmd.equals("rebase")) {
@@ -1595,12 +1610,12 @@ public class UiServer {
                     java.lang.reflect.Field fUp = rebase.getClass().getDeclaredField("upstream");
                     fUp.setAccessible(true);
                     fUp.set(rebase, upstream);
-                    int res = rebase.call();
+                    int res = executeCommandWithDbClosed(rebase);
                     if (res != 0) throw new RuntimeException("Rebase returned code: " + res);
                     message = "Successfully rebased current branch onto " + upstream;
                 } else if (cmd.equals("prune")) {
                     com.draftflow.DraftFlow.PruneCmd prune = new com.draftflow.DraftFlow.PruneCmd();
-                    int res = prune.call();
+                    int res = executeCommandWithDbClosed(prune);
                     if (res != 0) throw new RuntimeException("Prune returned code: " + res);
                     message = "Successfully pruned unreachable objects from the CAS store!";
                 } else if (cmd.equals("resolve")) {
@@ -1754,14 +1769,14 @@ public class UiServer {
                         java.lang.reflect.Field fNew = br.getClass().getDeclaredField("newBranch");
                         fNew.setAccessible(true);
                         fNew.set(br, createBranch);
-                        int res = br.call();
+                        int res = executeCommandWithDbClosed(br);
                         if (res != 0) throw new RuntimeException("Branch creation returned code: " + res);
                         message = "Successfully created branch: " + createBranch;
                     } else if (deleteBranchName != null && !deleteBranchName.trim().isEmpty()) {
                         java.lang.reflect.Field fDel = br.getClass().getDeclaredField("deleteBranch");
                         fDel.setAccessible(true);
                         fDel.set(br, deleteBranchName);
-                        int res = br.call();
+                        int res = executeCommandWithDbClosed(br);
                         if (res != 0) throw new RuntimeException("Branch deletion returned code: " + res);
                         message = "Successfully deleted branch: " + deleteBranchName;
                     } else {
@@ -1776,7 +1791,7 @@ public class UiServer {
                     java.lang.reflect.Field fTarget = merge.getClass().getDeclaredField("target");
                     fTarget.setAccessible(true);
                     fTarget.set(merge, revision);
-                    int res = merge.call();
+                    int res = executeCommandWithDbClosed(merge);
                     if (res != 0) throw new RuntimeException("Merge returned code: " + res);
                     message = "Successfully merged: " + revision;
                 } else {
@@ -2263,12 +2278,12 @@ public class UiServer {
                 java.lang.reflect.Field fRev = sw.getClass().getDeclaredField("revisionHash");
                 fRev.setAccessible(true);
                 fRev.set(sw, targetBranch);
-                sw.call();
+                executeCommandWithDbClosed(sw);
                 com.draftflow.DraftFlow.MergeCmd merge = new com.draftflow.DraftFlow.MergeCmd();
                 java.lang.reflect.Field fTarget = merge.getClass().getDeclaredField("target");
                 fTarget.setAccessible(true);
                 fTarget.set(merge, sourceBranch);
-                int mergeRes = merge.call();
+                int mergeRes = executeCommandWithDbClosed(merge);
                 if (mergeRes != 0) {
                     sendJsonResponse(exchange, 409, "{\"error\":\"Merge conflict occurred. Please resolve conflicts first.\"}");
                     return;
