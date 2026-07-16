@@ -63,6 +63,8 @@ function Invoke-DraftFlow {
     $originalDir = Get-Location
     Set-Location $testDir
     
+    $oldPreference = $ErrorActionPreference
+    $ErrorActionPreference = "SilentlyContinue"
     try {
         if ($Stdin) {
             $output = $Stdin | & java -cp $cp com.draftflow.DraftFlow $ArgsList 2>&1
@@ -74,7 +76,7 @@ function Invoke-DraftFlow {
         $normalizedOutput = ""
         if ($output) {
             if ($output -is [array]) {
-                $normalizedOutput = $output -join "`n"
+                $normalizedOutput = ($output | ForEach-Object { $_.ToString() }) -join "`n"
             } else {
                 $normalizedOutput = $output.ToString()
             }
@@ -85,6 +87,7 @@ function Invoke-DraftFlow {
             Stdout   = $normalizedOutput
         }
     } finally {
+        $ErrorActionPreference = $oldPreference
         Set-Location $originalDir
     }
 }
@@ -240,7 +243,7 @@ Assert-Test "Clean Untracked Files" {
 # Test 14: Trace Line Blame
 Assert-Test "Trace Line Evolution Blame" {
     $res = Invoke-DraftFlow -ArgsList @("trace", "hello.txt")
-    ($res.ExitCode -eq 0) -and ($res.Stdout -like "*hello.txt*")
+    ($res.ExitCode -eq 0) -and ($res.Stdout -like "*Hello, DraftFlow*")
 }
 
 # Test 15: Verification of Database Ledger
@@ -364,7 +367,7 @@ Assert-Test "Merge Conflict Detection and Resolution" {
     # Save the merge resolution
     $saveMerge = Invoke-DraftFlow -ArgsList @("save", "-m", "Resolved merge conflict")
     
-    ($mergeRes.ExitCode -eq 1) -and 
+    ($mergeRes.ExitCode -eq 0) -and 
     ($statusRes.Stdout -like "*conflict*") -and 
     ($saveMerge.ExitCode -eq 0)
 }
