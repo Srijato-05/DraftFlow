@@ -120,6 +120,31 @@ function AppLayout({ user, onLogout, theme, onThemeChange, children }) {
   ];
 }, [selectedRepo]);
 
+  const checkIsActive = (link) => {
+    const path = location.pathname
+    if (link.to === '/repos') return path === '/repos'
+    if (link.to === '/repositories') return path === '/repositories' || path.startsWith('/repositories/')
+    if (link.to === '/profile') return path === '/profile'
+    if (link.to === '/settings') return path === '/settings'
+
+    if (!selectedRepo) return false
+    const baseRepoPath = `/repo/${selectedRepo.id}`
+
+    if (link.label === 'Commits') {
+      return path === baseRepoPath || path.startsWith(`${baseRepoPath}/commit/`)
+    }
+
+    if (link.label === 'Snapshots') {
+      return path.startsWith(`${baseRepoPath}/snapshots`) || path.startsWith(`${baseRepoPath}/snapshot/`)
+    }
+
+    if (link.label === 'Pull Requests') {
+      return path.startsWith(`${baseRepoPath}/pull-requests`)
+    }
+
+    return path.startsWith(link.to)
+  }
+
   const breadcrumbs = useMemo(() => {
     const segments = location.pathname.split('/').filter(Boolean)
     return segments.length > 0 ? segments : ['workspace']
@@ -165,13 +190,7 @@ function AppLayout({ user, onLogout, theme, onThemeChange, children }) {
 
           <nav className="mt-6 flex-1 space-y-1">
             {workflowLinks.map((link) => {
-              const isActive = link.to === '/repos' || link.to === '/repositories' || link.to === '/profile' || link.to === '/settings'
-                ? location.pathname === link.to
-                : selectedRepo
-                  ? link.to === `/repo/${selectedRepo.id}`
-                    ? (location.pathname === `/repo/${selectedRepo.id}` || location.pathname.startsWith(`/repo/${selectedRepo.id}/commit/`))
-                    : location.pathname.startsWith(link.to)
-                  : false
+              const isActive = checkIsActive(link)
               const Icon = link.icon
               return (
                 <Link
