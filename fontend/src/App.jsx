@@ -165,7 +165,13 @@ function AppLayout({ user, onLogout, theme, onThemeChange, children }) {
 
           <nav className="mt-6 flex-1 space-y-1">
             {workflowLinks.map((link) => {
-              const isActive = location.pathname.startsWith(link.to)
+              const isActive = link.to === '/repos' || link.to === '/repositories' || link.to === '/profile' || link.to === '/settings'
+                ? location.pathname === link.to
+                : selectedRepo
+                  ? link.to === `/repo/${selectedRepo.id}`
+                    ? (location.pathname === `/repo/${selectedRepo.id}` || location.pathname.startsWith(`/repo/${selectedRepo.id}/commit/`))
+                    : location.pathname.startsWith(link.to)
+                  : false
               const Icon = link.icon
               return (
                 <Link
