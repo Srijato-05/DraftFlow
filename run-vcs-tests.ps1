@@ -38,7 +38,7 @@ $javacResult = Start-Process -FilePath "javac" -ArgumentList @("-cp", $cp, "-d",
 if ($javacResult.ExitCode -ne 0) {
     Write-Error "Java compilation failed. Cannot run test suite."
 }
-Write-Host "✔ Compilation successful." -ForegroundColor Green
+Write-Host "[OK] Compilation successful." -ForegroundColor Green
 Write-Host ""
 
 # Setup test workspace
@@ -384,10 +384,10 @@ Write-Host "====================================================================
 Write-Host ""
 
 if ($global:failedCount -gt 0) {
-    Write-Host "❌ Some tests failed. Please review output logs above." -ForegroundColor Red
+    Write-Host "[FAIL] Some tests failed. Please review output logs above." -ForegroundColor Red
     exit 1
 } else {
-    Write-Host "🎉 All automated checks verified successfully!" -ForegroundColor Green
+    Write-Host "[SUCCESS] All automated checks verified successfully!" -ForegroundColor Green
     Write-Host ""
     Write-Host "----------------------------------------------------------------------" -ForegroundColor Cyan
     Write-Host "                 MANUAL TESTING SANDBOX INITIALIZED" -ForegroundColor Cyan
