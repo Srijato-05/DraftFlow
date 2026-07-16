@@ -67,6 +67,10 @@ public class MetadataStore implements AutoCloseable {
                     .compress()
                     .open();
         } catch (Exception e) {
+            String msg = e.getMessage();
+            if (msg != null && (msg.toLowerCase().contains("lock") || msg.toLowerCase().contains("in use") || msg.toLowerCase().contains("locked"))) {
+                throw new IOException("Database file is locked by another process (is the DraftFlow Dashboard/UiServer running?). Please stop the dashboard or other running DraftFlow processes and try again.", e);
+            }
             // MVStore corruption recovery: backup corrupt db and recreate a clean one
             Path backupPath = dbFilePath.resolveSibling(dbFilePath.getFileName().toString() + ".corrupted_" + System.currentTimeMillis());
             try {
@@ -84,6 +88,10 @@ public class MetadataStore implements AutoCloseable {
                         .compress()
                         .open();
             } catch (Exception e2) {
+                String msg2 = e2.getMessage();
+                if (msg2 != null && (msg2.toLowerCase().contains("lock") || msg2.toLowerCase().contains("in use") || msg2.toLowerCase().contains("locked"))) {
+                    throw new IOException("Database file is locked by another process (is the DraftFlow Dashboard/UiServer running?). Please stop the dashboard or other running DraftFlow processes and try again.", e2);
+                }
                 // Secondary fallback: open in an alternative database file
                 Path fallbackPath = dbFilePath.resolveSibling(dbFilePath.getFileName().toString() + ".fallback");
                 try {
