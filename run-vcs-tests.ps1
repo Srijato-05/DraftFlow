@@ -379,7 +379,7 @@ Write-Host "====================================================================
 Write-Host "                           TEST SUMMARY" -ForegroundColor Cyan
 Write-Host "======================================================================" -ForegroundColor Cyan
 Write-Host "Total Tests Passed: $global:passedCount" -ForegroundColor Green
-Write-Host "Total Tests Failed: $global:failedCount" -ForegroundColor ($global:failedCount -eq 0 ? "Green" : "Red")
+Write-Host "Total Tests Failed: $global:failedCount" -ForegroundColor ($(if ($global:failedCount -eq 0) { "Green" } else { "Red" }))
 Write-Host "======================================================================" -ForegroundColor Cyan
 Write-Host ""
 
