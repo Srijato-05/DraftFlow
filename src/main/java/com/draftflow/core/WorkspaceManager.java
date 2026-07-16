@@ -328,7 +328,11 @@ public class WorkspaceManager {
                 Path target = entry.getValue();
 
                 Files.createDirectories(target.getParent());
-                Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+                try {
+                    Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+                } catch (IOException e) {
+                    Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
+                }
 
                 String relPath = rootDir.relativize(target).toString().replace('\\', '/');
                 TreeFile tf = targetFiles.stream().filter(f -> f.relPath.equals(relPath)).findFirst().orElse(null);
