@@ -1542,6 +1542,30 @@ public class UiServer {
                     int res = undo.call();
                     if (res != 0) throw new RuntimeException("Undo returned code: " + res);
                     message = "Successfully undid last commit!";
+                } else if (cmd.equals("select-repo")) {
+                    String id = params.get("id");
+                    if (id == null) throw new IllegalArgumentException("Missing id parameter");
+                    Path currentRepoDir = cas.getRootDir();
+                    Path parentDir = currentRepoDir.getParent();
+                    if (parentDir != null) {
+                        Path targetRepoDir = parentDir.resolve(id);
+                        if (Files.exists(targetRepoDir) && Files.isDirectory(targetRepoDir) && Files.exists(targetRepoDir.resolve(".draftflow"))) {
+                            if (db != null) {
+                                db.close();
+                            }
+                            CAS newCas = new CAS(targetRepoDir);
+                            Path dbPath = newCas.getDraftFlowDir().resolve("index").resolve("index.mv.db");
+                            MetadataStore newDb = new MetadataStore(dbPath);
+                            newDb.open();
+                            cas = newCas;
+                            db = newDb;
+                            message = "Successfully switched workspace repository to: " + id;
+                        } else {
+                            throw new IllegalArgumentException("Repository not found or invalid: " + id);
+                        }
+                    } else {
+                        throw new IllegalStateException("Parent directory unavailable for workspace resolution.");
+                    }
                 } else if (cmd.equals("switch")) {
                     String target = params.get("target");
                     if (target == null) throw new IllegalArgumentException("Missing target parameter");

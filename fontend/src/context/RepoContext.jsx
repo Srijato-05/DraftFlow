@@ -36,6 +36,9 @@ export function RepoProvider({ children }) {
     if (!repo) return
 
     try {
+      await fetch(`/api/action?cmd=select-repo&id=${encodeURIComponent(repo.id)}`, {
+        method: 'POST'
+      })
       const statusRes = await fetch('/api/status')
       const dagRes = await fetch('/api/dag')
       
