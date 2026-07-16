@@ -1415,18 +1415,7 @@ public class DraftFlow implements Callable<Integer> {
             uiServer.start();
 
             try {
-                try {
-                    if (!"true".equalsIgnoreCase(System.getProperty("java.awt.headless")) &&
-                        java.awt.Desktop.isDesktopSupported() &&
-                        java.awt.Desktop.getDesktop().isSupported(java.awt.Desktop.Action.BROWSE)) {
-                        java.awt.Desktop.getDesktop().browse(new URI("http://localhost:" + uiServer.getPort()));
-                    } else {
-                        System.out.println("Dashboard: http://localhost:" + uiServer.getPort());
-                    }
-                } catch (Exception e) {
-                    System.out.println("Dashboard: http://localhost:" + uiServer.getPort());
-                }
-
+                System.out.println("Dashboard: http://localhost:" + uiServer.getPort());
                 System.out.println("Press Ctrl+C to terminate UI server...");
                 Thread.currentThread().join();
             } catch (InterruptedException e) {
