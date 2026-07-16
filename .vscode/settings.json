@@ -1,4 +1,8 @@
 {
+  "java.project.sourcePaths": [
+    "src/main/java",
+    "src/test/java"
+  ],
   "java.project.referencedLibraries": [
     "C:/Users/User/.gradle/caches/modules-2/files-2.1/com.google.code.gson/gson/2.11.0/527175ca6d81050b53bdd4c457a6d6e017626b0e/gson-2.11.0.jar",
     "C:/Users/User/.gradle/caches/modules-2/files-2.1/info.picocli/picocli/4.7.6/77c2cb87814b6a03d431fc856024a9f8ff605ad4/picocli-4.7.6.jar",

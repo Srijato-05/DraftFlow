@@ -49,28 +49,61 @@ public class UiServer {
         this.port = port;
     }
 
+    private void registerContext(String path, HttpHandler handler) {
+        com.sun.net.httpserver.HttpContext context = server.createContext(path, handler);
+        context.getFilters().add(new DatabaseLifecycleFilter());
+    }
+
+    private class DatabaseLifecycleFilter extends com.sun.net.httpserver.Filter {
+        @Override
+        public String description() {
+            return "Manages database connection lifecycle per HTTP request to allow concurrent CLI operations";
+        }
+
+        @Override
+        public void doFilter(HttpExchange exchange, Chain chain) throws IOException {
+            synchronized (UiServer.this) {
+                Path dbPath = cas.getDraftFlowDir().resolve("index").resolve("index.mv.db");
+                db = new MetadataStore(dbPath);
+                db.open();
+                try {
+                    chain.doFilter(exchange);
+                } finally {
+                    try {
+                        db.close();
+                    } catch (Exception ignored) {}
+                    db = null;
+                }
+            }
+        }
+    }
+
     public void start() throws IOException {
+        if (db != null) {
+            db.close();
+            db = null;
+        }
         server = HttpServer.create(new InetSocketAddress(port), 0);
-        server.createContext("/", new IndexHandler());
-        server.createContext("/api/dag", new DagHandler());
-        server.createContext("/api/status", new StatusHandler());
-        server.createContext("/api/ledger", new LedgerHandler());
-        server.createContext("/api/trace", new TraceHandler());
-        server.createContext("/api/conflict-details", new ConflictDetailsHandler());
-        server.createContext("/api/action", new ActionHandler());
-        server.createContext("/api/file-content", new FileContentHandler());
-        server.createContext("/api/auth/signup", new SignupHandler());
-        server.createContext("/api/auth/login", new LoginHandler());
-        server.createContext("/api/auth/profile", new ProfileHandler());
-        server.createContext("/api/pull-requests", new PullRequestsHandler());
-        server.createContext("/api/pull-requests/merge", new PullRequestMergeHandler());
-        server.createContext("/api/pull-requests/close", new PullRequestCloseHandler());
-        server.createContext("/api/pull-requests/comment", new PullRequestCommentHandler());
-        server.createContext("/api/settings", new SettingsHandler());
-        server.createContext("/api/repositories", new RepositoriesHandler());
-        server.createContext("/api/repositories/create", new CreateRepositoryHandler());
-        server.createContext("/api/commit-tree", new CommitTreeHandler());
-        server.createContext("/api/commit-diff", new CommitDiffHandler());
+        registerContext("/", new IndexHandler());
+        registerContext("/api/dag", new DagHandler());
+        registerContext("/api/status", new StatusHandler());
+        registerContext("/api/ledger", new LedgerHandler());
+        registerContext("/api/trace", new TraceHandler());
+        registerContext("/api/conflict-details", new ConflictDetailsHandler());
+        registerContext("/api/action", new ActionHandler());
+        registerContext("/api/file-content", new FileContentHandler());
+        registerContext("/api/auth/signup", new SignupHandler());
+        registerContext("/api/auth/login", new LoginHandler());
+        registerContext("/api/auth/profile", new ProfileHandler());
+        registerContext("/api/pull-requests", new PullRequestsHandler());
+        registerContext("/api/pull-requests/merge", new PullRequestMergeHandler());
+        registerContext("/api/pull-requests/close", new PullRequestCloseHandler());
+        registerContext("/api/pull-requests/comment", new PullRequestCommentHandler());
+        registerContext("/api/settings", new SettingsHandler());
+        registerContext("/api/repositories", new RepositoriesHandler());
+        registerContext("/api/repositories/create", new CreateRepositoryHandler());
+        registerContext("/api/commit-tree", new CommitTreeHandler());
+        registerContext("/api/commit-diff", new CommitDiffHandler());
         server.setExecutor(null); // default executor
         server.start();
         this.port = server.getAddress().getPort();
