@@ -57,14 +57,14 @@ function CommitHistoryPage() {
           </div>
           <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-950/70">
             <p className="text-xs font-semibold uppercase tracking-[0.25em] text-slate-500 dark:text-slate-400">Latest Snapshot</p>
-            <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">{repo.lastCommitMessage}</p>
+            <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">{repo.lastCommitMessage || 'n/a'}</p>
           </div>
           <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-950/70">
             <p className="text-xs font-semibold uppercase tracking-[0.25em] text-slate-500 dark:text-slate-400">Commit Count</p>
             <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">{repo.statistics?.totalCommits ?? 0}</p>
           </div>
           <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-950/70">
-            <p className="text-xs font-semibold uppercase tracking-[0.25em] text-slate-500 dark:text-slate-400">Snapshot Count</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.25em] text-slate-500 dark:text-slate-400">Workspace Files</p>
             <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">{repo.files?.length ?? 0}</p>
           </div>
         </div>
@@ -104,7 +104,7 @@ function CommitHistoryPage() {
               Branches
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
-              {Object.keys(repo.branches ?? {}).map((branch) => (
+              {(Array.isArray(repo.branches) ? repo.branches : Object.keys(repo.branches ?? {})).map((branch) => (
                 <span key={branch} className={`rounded-full px-3 py-1.5 text-sm ${branch === branchLabel ? 'bg-cyan-500/15 text-cyan-600 dark:text-cyan-300' : 'bg-slate-50 text-slate-600 dark:bg-slate-950/70 dark:text-slate-300'}`}>
                   {branch}
                 </span>

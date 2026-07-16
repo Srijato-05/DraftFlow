@@ -104,10 +104,10 @@ export default function SnapshotExplorerPage() {
             onChange={(e) => setBranch(e.target.value)}
             className="bg-transparent outline-none"
           >
-            <option>All Branches</option>
-            <option>main</option>
-            <option>develop</option>
-            <option>feature/auth</option>
+            <option value="All Branches">All Branches</option>
+            {(Array.isArray(selectedRepo?.branches) ? selectedRepo.branches : Object.keys(selectedRepo?.branches ?? {})).map(b => (
+              <option key={b} value={b}>{b}</option>
+            ))}
           </select>
         </div>
 
