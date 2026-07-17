@@ -54,10 +54,24 @@ export function AuthProvider({ children }) {
 
     if (user) {
       window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user))
+      fetch('/api/auth/sync', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Email': user.email
+        },
+        body: JSON.stringify({
+          name: user.name,
+          email: user.email
+        })
+      }).catch(err => console.error("Sync error:", err))
       return
     }
 
     window.localStorage.removeItem(AUTH_STORAGE_KEY)
+    fetch('/api/auth/logout', {
+      method: 'POST'
+    }).catch(err => console.error("Logout error:", err))
   }, [user])
 
   const login = async (credentials) => {

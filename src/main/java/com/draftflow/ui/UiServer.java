@@ -95,6 +95,8 @@ public class UiServer {
         registerContext("/api/auth/signup", new SignupHandler());
         registerContext("/api/auth/login", new LoginHandler());
         registerContext("/api/auth/profile", new ProfileHandler());
+        registerContext("/api/auth/sync", new SyncHandler());
+        registerContext("/api/auth/logout", new LogoutHandler());
         registerContext("/api/pull-requests", new PullRequestsHandler());
         registerContext("/api/pull-requests/merge", new PullRequestMergeHandler());
         registerContext("/api/pull-requests/close", new PullRequestCloseHandler());
@@ -2822,6 +2824,70 @@ public class UiServer {
                     diff = compareTrees(parentRev.getTreeHash(), rev.getTreeHash());
                 }
                 sendJsonResponse(exchange, 200, GSON.toJson(diff));
+            } catch (Exception e) {
+                e.printStackTrace();
+                sendJsonResponse(exchange, 500, "{\"error\":\"" + e.getMessage() + "\"}");
+            }
+        }
+    }
+    private class SyncHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            setCorsHeaders(exchange);
+            if (exchange.getRequestMethod().equalsIgnoreCase("OPTIONS")) {
+                exchange.sendResponseHeaders(204, -1);
+                return;
+            }
+            if (!exchange.getRequestMethod().equalsIgnoreCase("POST")) {
+                exchange.sendResponseHeaders(405, -1);
+                return;
+            }
+            try {
+                String authEmail = exchange.getRequestHeaders().getFirst("X-User-Email");
+                if (authEmail == null || authEmail.isEmpty() || db.getUser(authEmail) == null) {
+                    sendJsonResponse(exchange, 401, "{\"error\":\"Unauthorized: Session user is invalid or missing.\"}");
+                    return;
+                }
+                String body = readRequestBody(exchange);
+                JsonObject jo = JsonParser.parseString(body).getAsJsonObject();
+                String name = jo.has("name") ? jo.get("name").getAsString() : null;
+                String email = jo.has("email") ? jo.get("email").getAsString() : null;
+                if (email != null && !email.matches("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$")) {
+                    sendJsonResponse(exchange, 400, "{\"error\":\"Invalid email format.\"}");
+                    return;
+                }
+                if (email != null && !email.equalsIgnoreCase(authEmail)) {
+                    sendJsonResponse(exchange, 403, "{\"error\":\"Forbidden: Email does not match auth user.\"}");
+                    return;
+                }
+                if (name != null) {
+                    db.setConfig("author.name", name);
+                }
+                if (email != null) {
+                    db.setConfig("author.email", email);
+                }
+                db.commit();
+                sendJsonResponse(exchange, 200, "{\"message\":\"Sync successful.\"}");
+            } catch (Exception e) {
+                e.printStackTrace();
+                sendJsonResponse(exchange, 500, "{\"error\":\"" + e.getMessage() + "\"}");
+            }
+        }
+    }
+
+    private class LogoutHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            setCorsHeaders(exchange);
+            if (exchange.getRequestMethod().equalsIgnoreCase("OPTIONS")) {
+                exchange.sendResponseHeaders(204, -1);
+                return;
+            }
+            try {
+                db.setConfig("author.name", null);
+                db.setConfig("author.email", null);
+                db.commit();
+                sendJsonResponse(exchange, 200, "{\"message\":\"Logged out successfully.\"}");
             } catch (Exception e) {
                 e.printStackTrace();
                 sendJsonResponse(exchange, 500, "{\"error\":\"" + e.getMessage() + "\"}");
