@@ -3,8 +3,8 @@ import { Eye, EyeOff, GitBranch, KeyRound, Sparkles } from 'lucide-react'
 import { Link, Navigate } from 'react-router-dom'
 
 function LoginPage({ onLogin, user }) {
-  const [email, setEmail] = useState('dev@vcs.dev')
-  const [password, setPassword] = useState('password123')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [rememberMe, setRememberMe] = useState(true)
   const [error, setError] = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -137,15 +137,6 @@ function LoginPage({ onLogin, user }) {
                 {loading ? 'Signing in...' : 'Sign in'}
               </button>
             </form>
-
-            <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-400">
-              <div className="mb-2 flex items-center gap-2 text-slate-200">
-                <GitBranch size={16} className="text-cyan-400" />
-                Demo credentials
-              </div>
-              <p>Email: dev@vcs.dev</p>
-              <p>Password: password123</p>
-            </div>
 
             <div className="mt-6 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-400">
               <span>Don&apos;t have an account?</span>
