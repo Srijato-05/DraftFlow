@@ -11,10 +11,7 @@ function CommitHistoryPage() {
   const { selectedRepo } = useRepo()
 
   const repo = useMemo(() => {
-    if (selectedRepo?.id === repoId) {
-      return selectedRepo;
-    }
-    return selectedRepo;
+    return selectedRepo?.id === repoId ? selectedRepo : null;
   }, [repoId, selectedRepo]);
 
   const commits = useMemo(() => {
@@ -22,7 +19,11 @@ function CommitHistoryPage() {
   }, [repo?.commits])
 
   if (!repo) {
-    return <div className="text-slate-400">Repository not found.</div>
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-cyan-500 border-t-transparent"></div>
+      </div>
+    );
   }
 
   const branchLabel = repo.currentBranch || 'main'

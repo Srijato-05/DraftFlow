@@ -149,6 +149,30 @@ public class WorkspaceManager {
             db.setConfig("activeChangeId", activeChangeId);
         }
 
+        String branchName = activeHead != null && activeHead.startsWith("heads/") ? activeHead.substring(6) : "detached HEAD";
+        List<String> modifiedFileNames = new ArrayList<>();
+        if (changedPaths != null) {
+            for (Path path : changedPaths) {
+                if (!ignoreMatcher.isIgnored(path) && !Files.isDirectory(path)) {
+                    modifiedFileNames.add(rootDir.relativize(path).getFileName().toString());
+                }
+            }
+        }
+
+        String draftMsg;
+        if (modifiedFileNames.isEmpty()) {
+            draftMsg = "Working Copy: " + branchName + " (clean)";
+        } else {
+            Collections.sort(modifiedFileNames);
+            if (modifiedFileNames.size() == 1) {
+                draftMsg = "WIP on " + branchName + " (" + modifiedFileNames.get(0) + ")";
+            } else if (modifiedFileNames.size() == 2) {
+                draftMsg = "WIP on " + branchName + " (" + modifiedFileNames.get(0) + ", " + modifiedFileNames.get(1) + ")";
+            } else {
+                draftMsg = "WIP on " + branchName + " (" + modifiedFileNames.get(0) + " and " + (modifiedFileNames.size() - 1) + " other files)";
+            }
+        }
+
         // 4. Write draft revision
         Revision draftRev = new Revision(
                 rootTreeHash,
@@ -156,7 +180,7 @@ public class WorkspaceManager {
                 activeChangeId,
                 getAuthor(),
                 System.currentTimeMillis(),
-                "shadow-revision (WIP)",
+                draftMsg,
                 true // Is draft
         );
 

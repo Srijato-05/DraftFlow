@@ -487,13 +487,14 @@ public class DraftFlow implements Callable<Integer> {
                     db.setConfig("activeRevisionHash", permanentHash);
                     db.setChangeRevision(draft.getChangeId(), permanentHash);
 
+                    String branchName = activeHead != null && activeHead.startsWith("heads/") ? activeHead.substring(6) : "detached HEAD";
                     Revision newDraft = new Revision(
                             draft.getTreeHash(),
                             Collections.singletonList(permanentHash),
                             draft.getChangeId(),
                             getAuthor(db),
                             System.currentTimeMillis(),
-                            "shadow-revision (WIP)",
+                            "Working Copy: " + branchName + " (clean)",
                             true
                     );
                     newDraft = SignatureHelper.signRevisionIfKeyExists(newDraft, cas);

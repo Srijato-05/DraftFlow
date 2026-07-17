@@ -39,6 +39,14 @@ export default function SnapshotExplorerPage() {
     });
   }, [snapshots, search, branch]);
 
+  if (!selectedRepo || selectedRepo.id !== repoId) {
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-cyan-500 border-t-transparent"></div>
+      </div>
+    );
+  }
+
   const latestSnapshot = filteredSnapshots[0];
 
   return (

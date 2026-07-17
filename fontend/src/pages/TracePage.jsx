@@ -74,12 +74,19 @@ export default function TracePage() {
     fetchTrace();
   }, [selectedFile]);
 
-  const filteredFiles = trackedFiles.filter((file) =>
-    file.toLowerCase().includes(fileSearch.toLowerCase())
-  );
+  if (!selectedRepo || selectedRepo.id !== repoId) {
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-cyan-500 border-t-transparent"></div>
+      </div>
+    );
+  }
 
   // If no file is selected, render the file explorer list
   if (!selectedFile) {
+    const filteredFiles = trackedFiles.filter((file) =>
+      file.toLowerCase().includes(fileSearch.toLowerCase())
+    );
     return (
       <div className="space-y-6">
         {/* Header */}
