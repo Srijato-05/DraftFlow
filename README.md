@@ -83,7 +83,7 @@ After running `draftflow setup`, the following layout is created inside the work
 ### Project Source Structure
 
 ```
-Intern-1/
+VCS_DraftFlow/
 |
 +-- src/main/java/com/draftflow/
 |   +-- DraftFlow.java           CLI entry point & all sub-commands (Picocli)
