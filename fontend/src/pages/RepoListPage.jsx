@@ -151,14 +151,14 @@ function RepoListPage({ user }) {
           </section>
 
           <div className="grid gap-6 md:grid-cols-2">
-            <section className="rounded-[28px] border border-slate-200/70 bg-white/80 p-6 shadow-sm backdrop-blur dark:border-slate-800 dark:bg-slate-900/70">
+            <section className="min-w-0 overflow-hidden rounded-[28px] border border-slate-200/70 bg-white/80 p-6 shadow-sm backdrop-blur dark:border-slate-800 dark:bg-slate-900/70">
               <div className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
                 <FolderGit2 size={18} className="text-cyan-500" />
                 Current Repository
               </div>
               <div className="mt-4">
-                <p className="text-2xl font-semibold text-slate-900 dark:text-white">{selectedRepo?.name ?? 'No repository selected'}</p>
-                <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400">{selectedRepo?.description ?? 'Select a repository to see its details.'}</p>
+                <p className="text-2xl font-semibold text-slate-900 dark:text-white truncate">{selectedRepo?.name ?? 'No repository selected'}</p>
+                <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400 truncate">{selectedRepo?.description ?? 'Select a repository to see its details.'}</p>
               </div>
               <div className="mt-5 flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-950/70 dark:text-slate-300">
                 <span>{selectedRepo?.visibility ?? 'Public'}</span>
@@ -168,38 +168,45 @@ function RepoListPage({ user }) {
               </div>
             </section>
 
-            <section className="rounded-[28px] border border-slate-200/70 bg-white/80 p-6 shadow-sm backdrop-blur dark:border-slate-800 dark:bg-slate-900/70">
+            <section className="min-w-0 overflow-hidden rounded-[28px] border border-slate-200/70 bg-white/80 p-6 shadow-sm backdrop-blur dark:border-slate-800 dark:bg-slate-900/70">
               <div className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
                 <GitCommitVertical size={18} className="text-cyan-500" />
                 HEAD
               </div>
               <div className="mt-4">
-                <p className="text-xl font-semibold text-slate-900 dark:text-white">{latestCommit?.message ?? 'No recent commit'}</p>
-                <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">{latestCommit?.id ?? 'commit unavailable'}</p>
+                <p className="font-mono text-2xl font-bold tracking-tight text-slate-900 dark:text-white truncate">
+                  {latestCommit?.id ? latestCommit.id.slice(0, 8) : 'N/A'}
+                </p>
+                <p className="mt-2 text-sm text-slate-500 dark:text-slate-400 truncate" title={latestCommit?.message}>
+                  {latestCommit?.message ?? 'No recent commit'}
+                </p>
+                <p className="mt-1 font-mono text-[10px] text-slate-400 dark:text-slate-500 break-all" title={latestCommit?.id}>
+                  {latestCommit?.id ?? ''}
+                </p>
               </div>
             </section>
           </div>
 
           <div className="grid gap-6 md:grid-cols-2">
-            <section className="rounded-[28px] border border-slate-200/70 bg-white/80 p-6 shadow-sm backdrop-blur dark:border-slate-800 dark:bg-slate-900/70">
+            <section className="min-w-0 overflow-hidden rounded-[28px] border border-slate-200/70 bg-white/80 p-6 shadow-sm backdrop-blur dark:border-slate-800 dark:bg-slate-900/70">
               <div className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
                 <Clock3 size={18} className="text-cyan-500" />
                 Latest Commit
               </div>
               <div className="mt-4">
-                <p className="text-lg font-semibold text-slate-900 dark:text-white">{latestCommit?.message ?? 'No recent commit'}</p>
-                <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">{latestCommit?.author ?? 'Workspace activity'}</p>
+                <p className="text-lg font-semibold text-slate-900 dark:text-white truncate">{latestCommit?.message ?? 'No recent commit'}</p>
+                <p className="mt-2 text-sm text-slate-500 dark:text-slate-400 truncate">{latestCommit?.author ?? 'Workspace activity'}</p>
               </div>
             </section>
 
-            <section className="rounded-[28px] border border-slate-200/70 bg-white/80 p-6 shadow-sm backdrop-blur dark:border-slate-800 dark:bg-slate-900/70">
+            <section className="min-w-0 overflow-hidden rounded-[28px] border border-slate-200/70 bg-white/80 p-6 shadow-sm backdrop-blur dark:border-slate-800 dark:bg-slate-900/70">
               <div className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
                 <GitBranch size={18} className="text-cyan-500" />
                 Branch
               </div>
               <div className="mt-4">
-                <p className="text-xl font-semibold text-slate-900 dark:text-white">{currentBranch}</p>
-                <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">{selectedRepo?.branches?.length ?? 0} branches available</p>
+                <p className="text-xl font-semibold text-slate-900 dark:text-white truncate">{currentBranch}</p>
+                <p className="mt-2 text-sm text-slate-500 dark:text-slate-400 truncate">{selectedRepo?.branches?.length ?? 0} branches available</p>
               </div>
             </section>
           </div>
