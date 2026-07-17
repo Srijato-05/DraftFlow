@@ -27,7 +27,16 @@ export default function TracePage() {
         const files = data.trackedFiles || [];
         setTrackedFiles(files);
         if (files.length > 0) {
-          setSelectedFile(files[0]);
+          const helloFile = files.find(f => f.toLowerCase().endsWith('hello.txt'));
+          const readmeFile = files.find(f => f.toLowerCase().endsWith('readme.md'));
+          if (helloFile) {
+            setSelectedFile(helloFile);
+          } else if (readmeFile) {
+            setSelectedFile(readmeFile);
+          } else {
+            const sortedByLength = [...files].sort((a, b) => a.length - b.length);
+            setSelectedFile(sortedByLength[0]);
+          }
         }
       } catch (err) {
         setError(err.message);
