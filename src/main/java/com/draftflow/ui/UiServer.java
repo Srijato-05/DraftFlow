@@ -1477,6 +1477,11 @@ public class UiServer {
     private class TraceHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
+            setCorsHeaders(exchange);
+            if (exchange.getRequestMethod().equalsIgnoreCase("OPTIONS")) {
+                exchange.sendResponseHeaders(204, -1);
+                return;
+            }
             try {
                 String query = exchange.getRequestURI().getQuery();
                 String fileName = null;
@@ -1534,27 +1539,27 @@ public class UiServer {
                     currHash = parentHash;
                 }
 
-                StringBuilder sb = new StringBuilder("[");
+                List<Map<String, String>> traceList = new ArrayList<>();
                 for (int i = 0; i < currentLines.size(); i++) {
                     String bh = finalTrace[i];
                     Revision r = (Revision) cas.readObject(bh);
                     String dateStr = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new java.util.Date(r.getTimestamp()));
-                    sb.append(String.format("{\"hash\":\"%s\",\"author\":\"%s\",\"date\":\"%s\",\"line\":\"%s\"}",
-                            bh.substring(0, 8),
-                            r.getAuthor().replace("\"", "\\\""),
-                            dateStr,
-                            currentLines.get(i).replace("\\", "\\\\").replace("\"", "\\\"")
-                    ));
-                    if (i < currentLines.size() - 1) sb.append(",");
+                    Map<String, String> item = new HashMap<>();
+                    item.put("hash", bh);
+                    item.put("author", r.getAuthor());
+                    item.put("date", dateStr);
+                    item.put("line", currentLines.get(i));
+                    traceList.add(item);
                 }
-                sb.append("]");
-                byte[] response = sb.toString().getBytes(StandardCharsets.UTF_8);
+
+                byte[] response = GSON.toJson(traceList).getBytes(StandardCharsets.UTF_8);
                 exchange.getResponseHeaders().set("Content-Type", "application/json");
                 exchange.sendResponseHeaders(200, response.length);
                 try (OutputStream os = exchange.getResponseBody()) {
                     os.write(response);
                 }
             } catch (Exception e) {
+                e.printStackTrace();
                 byte[] response = ("{\"error\": \"" + e.getMessage() + "\"}").getBytes(StandardCharsets.UTF_8);
                 exchange.getResponseHeaders().set("Content-Type", "application/json");
                 exchange.sendResponseHeaders(500, response.length);
@@ -2128,6 +2133,10 @@ public class UiServer {
                 String body = readRequestBody(exchange);
                 JsonObject jo = JsonParser.parseString(body).getAsJsonObject();
                 String email = jo.get("email").getAsString();
+                if (email == null || !email.matches("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$")) {
+                    sendJsonResponse(exchange, 400, "{\"error\":\"Invalid email format.\"}");
+                    return;
+                }
                 if (db.getUser(email) != null) {
                     sendJsonResponse(exchange, 400, "{\"error\":\"User already exists.\"}");
                     return;
@@ -2142,6 +2151,13 @@ public class UiServer {
                     jo.addProperty("repositoryCount", 12);
                 }
                 db.putUser(email, GSON.toJson(jo));
+                
+                String name = jo.has("name") ? jo.get("name").getAsString() : (jo.has("fullName") ? jo.get("fullName").getAsString() : null);
+                if (name != null) {
+                    db.setConfig("author.name", name);
+                }
+                db.setConfig("author.email", email);
+
                 db.commit();
                 sendJsonResponse(exchange, 200, GSON.toJson(jo));
             } catch (Exception e) {
@@ -2178,6 +2194,14 @@ public class UiServer {
                     sendJsonResponse(exchange, 401, "{\"error\":\"Invalid email or password.\"}");
                     return;
                 }
+
+                String name = userObj.has("name") ? userObj.get("name").getAsString() : (userObj.has("fullName") ? userObj.get("fullName").getAsString() : null);
+                if (name != null) {
+                    db.setConfig("author.name", name);
+                }
+                db.setConfig("author.email", email);
+                db.commit();
+
                 sendJsonResponse(exchange, 200, userJson);
             } catch (Exception e) {
                 e.printStackTrace();
@@ -2194,6 +2218,12 @@ public class UiServer {
                 exchange.sendResponseHeaders(204, -1);
                 return;
             }
+            String authEmail = exchange.getRequestHeaders().getFirst("X-User-Email");
+            if (authEmail == null || authEmail.isEmpty() || db.getUser(authEmail) == null) {
+                sendJsonResponse(exchange, 401, "{\"error\":\"Unauthorized: Session user is invalid or missing.\"}");
+                return;
+            }
+
             String email = null;
             String query = exchange.getRequestURI().getQuery();
             if (query != null) {
@@ -2201,13 +2231,10 @@ public class UiServer {
                 email = params.get("email");
             }
             if (email == null || email.isEmpty()) {
-                email = exchange.getRequestHeaders().getFirst("X-User-Email");
+                email = authEmail;
             }
+
             if (exchange.getRequestMethod().equalsIgnoreCase("GET")) {
-                if (email == null || email.isEmpty()) {
-                    sendJsonResponse(exchange, 400, "{\"error\":\"Missing email parameter or X-User-Email header.\"}");
-                    return;
-                }
                 String userJson = db.getUser(email);
                 if (userJson == null) {
                     sendJsonResponse(exchange, 404, "{\"error\":\"User not found.\"}");
@@ -2223,6 +2250,15 @@ public class UiServer {
                         sendJsonResponse(exchange, 400, "{\"error\":\"Missing email parameter.\"}");
                         return;
                     }
+                    if (!reqEmail.matches("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$")) {
+                        sendJsonResponse(exchange, 400, "{\"error\":\"Invalid email format.\"}");
+                        return;
+                    }
+                    if (!reqEmail.equalsIgnoreCase(authEmail)) {
+                        sendJsonResponse(exchange, 403, "{\"error\":\"Forbidden: You cannot modify another user's profile.\"}");
+                        return;
+                    }
+
                     String existingJson = db.getUser(reqEmail);
                     JsonObject mergedObj;
                     if (existingJson != null) {
@@ -2234,6 +2270,13 @@ public class UiServer {
                         mergedObj = jo;
                     }
                     db.putUser(reqEmail, GSON.toJson(mergedObj));
+
+                    String name = mergedObj.has("name") ? mergedObj.get("name").getAsString() : (mergedObj.has("fullName") ? mergedObj.get("fullName").getAsString() : null);
+                    if (name != null) {
+                        db.setConfig("author.name", name);
+                    }
+                    db.setConfig("author.email", reqEmail);
+
                     db.commit();
                     sendJsonResponse(exchange, 200, GSON.toJson(mergedObj));
                 } catch (Exception e) {
@@ -2440,6 +2483,8 @@ public class UiServer {
                 jo.addProperty("requiresStatusChecks", Boolean.parseBoolean(db.getConfig("settings.requiresStatusChecks")));
                 jo.addProperty("dismissesStaleReviews", Boolean.parseBoolean(db.getConfig("settings.dismissesStaleReviews")));
                 jo.addProperty("defaultBranch", db.getConfig("settings.defaultBranch") != null ? db.getConfig("settings.defaultBranch") : "main");
+                jo.addProperty("authorName", db.getConfig("author.name") != null ? db.getConfig("author.name") : "");
+                jo.addProperty("authorEmail", db.getConfig("author.email") != null ? db.getConfig("author.email") : "");
                 sendJsonResponse(exchange, 200, GSON.toJson(jo));
             } else if (exchange.getRequestMethod().equalsIgnoreCase("POST")) {
                 try {
@@ -2449,6 +2494,15 @@ public class UiServer {
                     if (jo.has("requiresStatusChecks")) db.setConfig("settings.requiresStatusChecks", String.valueOf(jo.get("requiresStatusChecks").getAsBoolean()));
                     if (jo.has("dismissesStaleReviews")) db.setConfig("settings.dismissesStaleReviews", String.valueOf(jo.get("dismissesStaleReviews").getAsBoolean()));
                     if (jo.has("defaultBranch")) db.setConfig("settings.defaultBranch", jo.get("defaultBranch").getAsString());
+                    if (jo.has("authorName")) db.setConfig("author.name", jo.get("authorName").getAsString());
+                    if (jo.has("authorEmail")) {
+                        String emailVal = jo.get("authorEmail").getAsString();
+                        if (emailVal != null && !emailVal.trim().isEmpty() && !emailVal.matches("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$")) {
+                            sendJsonResponse(exchange, 400, "{\"error\":\"Invalid author email format.\"}");
+                            return;
+                        }
+                        db.setConfig("author.email", emailVal);
+                    }
                     db.commit();
                     sendJsonResponse(exchange, 200, "{\"message\":\"Settings updated successfully.\"}");
                 } catch (Exception e) {
@@ -2702,9 +2756,12 @@ public class UiServer {
                 if (treeId != null) {
                     targetTreeHash = treeId;
                 } else if (commitId != null) {
-                    Revision rev = (Revision) cas.readObject(commitId);
-                    if (rev != null) {
-                        targetTreeHash = rev.getTreeHash();
+                    String fullHash = cas.resolveHash(commitId);
+                    if (fullHash != null) {
+                        Revision rev = (Revision) cas.readObject(fullHash);
+                        if (rev != null) {
+                            targetTreeHash = rev.getTreeHash();
+                        }
                     }
                 }
                 if (targetTreeHash == null) {
@@ -2748,7 +2805,11 @@ public class UiServer {
                 if (commitId == null) {
                     throw new IllegalArgumentException("Missing commit parameter");
                 }
-                Revision rev = (Revision) cas.readObject(commitId);
+                String fullHash = cas.resolveHash(commitId);
+                if (fullHash == null) {
+                    throw new IllegalArgumentException("Commit not found: " + commitId);
+                }
+                Revision rev = (Revision) cas.readObject(fullHash);
                 if (rev == null) {
                     throw new IllegalArgumentException("Commit not found: " + commitId);
                 }

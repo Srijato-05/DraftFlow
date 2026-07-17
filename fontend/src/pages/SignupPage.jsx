@@ -120,6 +120,12 @@ function SignupPage({ onSignup }) {
       return
     }
 
+    const emailRegex = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
+    if (!emailRegex.test(form.email)) {
+      setError('Please enter a valid email address.')
+      return
+    }
+
     setLoading(true)
     setError('')
     try {

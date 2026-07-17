@@ -154,7 +154,7 @@ public class WorkspaceManager {
                 rootTreeHash,
                 parents,
                 activeChangeId,
-                System.getProperty("user.name"),
+                getAuthor(),
                 System.currentTimeMillis(),
                 "shadow-revision (WIP)",
                 true // Is draft
@@ -584,5 +584,19 @@ public class WorkspaceManager {
             return out.toByteArray();
         }
         throw new IOException("Cannot read bytes for type: " + type);
+    }
+
+    private String getAuthor() {
+        if (db != null) {
+            String name = db.getConfig("author.name");
+            String email = db.getConfig("author.email");
+            if (name != null && !name.trim().isEmpty()) {
+                if (email != null && !email.trim().isEmpty()) {
+                    return name + " <" + email + ">";
+                }
+                return name;
+            }
+        }
+        return System.getProperty("user.name", "User");
     }
 }

@@ -8,6 +8,8 @@ function SettingsPage({ user, theme, onThemeChange }) {
   const [requiresStatusChecks, setRequiresStatusChecks] = useState(false)
   const [dismissesStaleReviews, setDismissesStaleReviews] = useState(false)
   const [defaultBranch, setDefaultBranch] = useState("main")
+  const [authorName, setAuthorName] = useState("")
+  const [authorEmail, setAuthorEmail] = useState("")
   
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -26,6 +28,8 @@ function SettingsPage({ user, theme, onThemeChange }) {
         setRequiresStatusChecks(Boolean(data.requiresStatusChecks))
         setDismissesStaleReviews(Boolean(data.dismissesStaleReviews))
         setDefaultBranch(data.defaultBranch || "main")
+        setAuthorName(data.authorName || "")
+        setAuthorEmail(data.authorEmail || "")
       }
     } catch (err) {
       console.error(err)
@@ -51,12 +55,15 @@ function SettingsPage({ user, theme, onThemeChange }) {
           requiresStatusChecks,
           dismissesStaleReviews,
           defaultBranch,
+          authorName,
+          authorEmail,
         })
       })
       if (res.ok) {
         setMessage("✅ Settings saved successfully!")
       } else {
-        setMessage("❌ Failed to save settings.")
+        const errData = await res.json().catch(() => ({}))
+        setMessage("❌ Failed to save settings: " + (errData.error || "Server error"))
       }
     } catch (err) {
       setMessage("❌ Error: " + err.message)
@@ -149,6 +156,28 @@ function SettingsPage({ user, theme, onThemeChange }) {
                   onChange={(e) => setDefaultBranch(e.target.value)}
                   className="w-full rounded-2xl border border-slate-300 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-cyan-500 dark:border-slate-700 dark:bg-slate-950"
                   placeholder="main"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-800 dark:text-slate-200 mb-2">Repository Author Name</label>
+                <input
+                  type="text"
+                  value={authorName}
+                  onChange={(e) => setAuthorName(e.target.value)}
+                  className="w-full rounded-2xl border border-slate-300 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-cyan-500 dark:border-slate-700 dark:bg-slate-950"
+                  placeholder="Jane Doe"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-800 dark:text-slate-200 mb-2">Repository Author Email</label>
+                <input
+                  type="email"
+                  value={authorEmail}
+                  onChange={(e) => setAuthorEmail(e.target.value)}
+                  className="w-full rounded-2xl border border-slate-300 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-cyan-500 dark:border-slate-700 dark:bg-slate-950"
+                  placeholder="jane@vcs.dev"
                 />
               </div>
 

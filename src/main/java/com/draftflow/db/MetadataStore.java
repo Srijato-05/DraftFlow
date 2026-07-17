@@ -257,6 +257,10 @@ public class MetadataStore implements AutoCloseable {
         configMap.remove(key);
     }
 
+    public synchronized Map<String, String> getAllConfig() {
+        return new java.util.HashMap<>(configMap);
+    }
+
     // --- User Operations ---
 
     public synchronized void putUser(String email, String json) {

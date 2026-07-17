@@ -64,13 +64,29 @@ import java.util.concurrent.Callable;
                 DraftFlow.TraceCmd.class,
                 DraftFlow.GitImportCmd.class,
                 DraftFlow.GitExportCmd.class,
-                DraftFlow.HooksCmd.class
+                DraftFlow.HooksCmd.class,
+                DraftFlow.ConfigCmd.class
         })
 public class DraftFlow implements Callable<Integer> {
 
     public static Path getCurrentDir() {
         return Paths.get(System.getProperty("draftflow.dir", ".")).toAbsolutePath().normalize();
     }
+
+    public static String getAuthor(com.draftflow.db.MetadataStore db) {
+        if (db != null) {
+            String name = db.getConfig("author.name");
+            String email = db.getConfig("author.email");
+            if (name != null && !name.trim().isEmpty()) {
+                if (email != null && !email.trim().isEmpty()) {
+                    return name + " <" + email + ">";
+                }
+                return name;
+            }
+        }
+        return System.getProperty("user.name", "User");
+    }
+
 
     @Override
     public Integer call() {
@@ -419,7 +435,7 @@ public class DraftFlow implements Callable<Integer> {
                                 treeHash,
                                 Collections.singletonList(cleanRev),
                                 draft.getChangeId(),
-                                System.getProperty("user.name"),
+                                getAuthor(db),
                                 System.currentTimeMillis(),
                                 message,
                                 false
@@ -441,7 +457,7 @@ public class DraftFlow implements Callable<Integer> {
                                 cas.getRootDir(),
                                 oldHash,
                                 permanentHash,
-                                System.getProperty("user.name"),
+                                getAuthor(db),
                                 "commit: " + message
                         );
                         com.draftflow.core.HooksManager.runHook("post-commit", cas.getRootDir());
@@ -456,7 +472,7 @@ public class DraftFlow implements Callable<Integer> {
                             draft.getTreeHash(),
                             draft.getParentHashes(),
                             draft.getChangeId(),
-                            System.getProperty("user.name"),
+                            getAuthor(db),
                             System.currentTimeMillis(),
                             message,
                             false
@@ -475,7 +491,7 @@ public class DraftFlow implements Callable<Integer> {
                             draft.getTreeHash(),
                             Collections.singletonList(permanentHash),
                             draft.getChangeId(),
-                            System.getProperty("user.name"),
+                            getAuthor(db),
                             System.currentTimeMillis(),
                             "shadow-revision (WIP)",
                             true
@@ -493,7 +509,7 @@ public class DraftFlow implements Callable<Integer> {
                             cas.getRootDir(),
                             oldHash,
                             permanentHash,
-                            System.getProperty("user.name"),
+                            getAuthor(db),
                             "commit: " + message
                     );
 
@@ -583,7 +599,7 @@ public class DraftFlow implements Callable<Integer> {
                             cas.getRootDir(),
                             oldHash,
                             fullHash,
-                            System.getProperty("user.name"),
+                            getAuthor(db),
                             "checkout: moving to " + revisionHash
                     );
 
@@ -643,7 +659,7 @@ public class DraftFlow implements Callable<Integer> {
                             result.treeHash,
                             parents,
                             activeChangeId,
-                            System.getProperty("user.name"),
+                            getAuthor(db),
                             System.currentTimeMillis(),
                             "Merge commit draft",
                             true
@@ -1297,7 +1313,7 @@ public class DraftFlow implements Callable<Integer> {
                             cas.getRootDir(),
                             activeRev,
                             parent,
-                            System.getProperty("user.name"),
+                            getAuthor(db),
                             "undo: revert to parent " + parent.substring(0, 8)
                     );
 
@@ -1657,7 +1673,7 @@ public class DraftFlow implements Callable<Integer> {
                                 shadow.getTreeHash(),
                                 Collections.singletonList(cleanRev),
                                 shadow.getChangeId(),
-                                System.getProperty("user.name"),
+                                getAuthor(db),
                                 System.currentTimeMillis(),
                                 message,
                                 false
@@ -2131,7 +2147,7 @@ public class DraftFlow implements Callable<Integer> {
                             cas.getRootDir(),
                             oldActive,
                             rebaseHead,
-                            System.getProperty("user.name"),
+                            getAuthor(db),
                             "rebase: replaying branch onto " + upstream
                     );
 
@@ -2221,7 +2237,7 @@ public class DraftFlow implements Callable<Integer> {
                             shadow.getTreeHash(),
                             Collections.singletonList(activeRev),
                             UUID.randomUUID().toString(),
-                            System.getProperty("user.name"),
+                            getAuthor(db),
                             System.currentTimeMillis(),
                             "Cherry-pick: " + targetRev.getMessage(),
                             false
@@ -2242,7 +2258,7 @@ public class DraftFlow implements Callable<Integer> {
                             cas.getRootDir(),
                             activeRev,
                             newCommHash,
-                            System.getProperty("user.name"),
+                            getAuthor(db),
                             "cherry-pick: " + targetRev.getMessage()
                     );
 
@@ -3092,6 +3108,60 @@ public class DraftFlow implements Callable<Integer> {
                 System.out.printf("  %-15s : %s\n", hook, installed ? "[Installed]" : "[Not Configured]");
             }
             return 0;
+        }
+    }
+
+    @Command(name = "config", description = "Get and set repository configuration settings")
+    public static class ConfigCmd implements Callable<Integer> {
+        @Option(names = {"--set"}, arity = "2", description = "Set a configuration parameter (key value)")
+        private String[] setParam;
+
+        @Option(names = {"--get"}, description = "Get a configuration parameter")
+        private String getParam;
+
+        @Option(names = {"--list"}, description = "List all configuration parameters")
+        private boolean listParams;
+
+        @Override
+        public Integer call() throws Exception {
+            Path currentDir = getCurrentDir();
+            CAS cas = new CAS(currentDir);
+            if (!Files.exists(cas.getDraftFlowDir())) {
+                System.err.println("Fatal: Not a draftflow repository.");
+                return 1;
+            }
+            return runLockedCommand(cas, () -> {
+                Path dbPath = cas.getDraftFlowDir().resolve("index").resolve("index.mv.db");
+                try (com.draftflow.db.MetadataStore db = new com.draftflow.db.MetadataStore(dbPath)) {
+                    db.open();
+                    if (setParam != null && setParam.length == 2) {
+                        String key = setParam[0];
+                        String val = setParam[1];
+                        db.setConfig(key, val);
+                        db.commit();
+                        System.out.println("Config set: " + key + " = " + val);
+                    } else if (getParam != null) {
+                        String val = db.getConfig(getParam);
+                        if (val != null) {
+                            System.out.println(val);
+                        } else {
+                            System.err.println("Config parameter not found: " + getParam);
+                            return 1;
+                        }
+                    } else if (listParams) {
+                        Map<String, String> configs = db.getAllConfig();
+                        if (configs.isEmpty()) {
+                            System.out.println("No configuration parameters set.");
+                        } else {
+                            configs.forEach((k, v) -> System.out.println(k + " = " + v));
+                        }
+                    } else {
+                        System.err.println("Error: Specify either --set, --get, or --list");
+                        return 1;
+                    }
+                    return 0;
+                }
+            });
         }
     }
 }

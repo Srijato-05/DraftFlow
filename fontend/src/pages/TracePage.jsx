@@ -143,7 +143,7 @@ export default function TracePage() {
                       to={`/repo/${repoId}/commit/${item.hash}`}
                       className="font-semibold text-cyan-600 dark:text-cyan-400 hover:underline flex items-center gap-0.5"
                     >
-                      {item.hash}
+                      {item.hash ? item.hash.substring(0, 8) : ""}
                       <ChevronRight size={10} />
                     </Link>
                     <span className="flex items-center gap-1 font-sans">

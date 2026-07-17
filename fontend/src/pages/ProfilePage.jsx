@@ -22,6 +22,7 @@ function ProfilePage() {
   const { user, updateProfile } = useAuth()
   const { repositories, selectedRepo } = useRepo()
   const [isEditing, setIsEditing] = useState(false)
+  const [error, setError] = useState('')
   const [form, setForm] = useState({
     name: user?.name || '',
     username: user?.username || '',
@@ -65,6 +66,14 @@ function ProfilePage() {
 
   const handleSubmit = (event) => {
     event.preventDefault()
+    setError('')
+
+    const emailRegex = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
+    if (!emailRegex.test(form.email)) {
+      setError('Please enter a valid email address.')
+      return
+    }
+
     updateProfile({
       name: form.name,
       username: form.username,
@@ -145,7 +154,8 @@ function ProfilePage() {
             {/* Read-only system values shown below, not editable as profile properties */}
           </div>
 
-          <div className="mt-6 flex justify-end">
+          <div className="mt-6 flex flex-col items-end gap-2">
+            {error && <span className="text-sm text-rose-500">{error}</span>}
             <button type="submit" className="rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400">
               Save Profile
             </button>
