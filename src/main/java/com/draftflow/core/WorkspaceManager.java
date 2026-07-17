@@ -328,11 +328,7 @@ public class WorkspaceManager {
                 Path target = entry.getValue();
 
                 Files.createDirectories(target.getParent());
-                try {
-                    Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-                } catch (IOException e) {
-                    Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
-                }
+                safeMoveWithRetry(temp, target);
 
                 String relPath = rootDir.relativize(target).toString().replace('\\', '/');
                 TreeFile tf = targetFiles.stream().filter(f -> f.relPath.equals(relPath)).findFirst().orElse(null);
@@ -376,6 +372,31 @@ public class WorkspaceManager {
             db.setRef(activeHead, targetRevisionHash);
         }
         db.commit();
+    }
+
+    private void safeMoveWithRetry(Path source, Path target) throws IOException {
+        int maxRetries = 10;
+        int delayMs = 50;
+        IOException lastEx = null;
+        for (int i = 0; i < maxRetries; i++) {
+            try {
+                try {
+                    Files.move(source, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+                } catch (IOException e) {
+                    Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
+                }
+                return; // Success
+            } catch (IOException e) {
+                lastEx = e;
+                try {
+                    Thread.sleep(delayMs);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw new IOException("Move interrupted", ie);
+                }
+            }
+        }
+        throw lastEx;
     }
 
     public String rebuildTree(List<FileMetadata> files) throws IOException {
