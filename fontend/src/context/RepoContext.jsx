@@ -57,6 +57,7 @@ export function RepoProvider({ children }) {
           timestamp: c.timestamp,
           parents: c.parents,
           parentCommitIds: c.parents,
+          treeHash: c.treeHash,
         })),
         files: (() => {
           const fileMap = new Map();

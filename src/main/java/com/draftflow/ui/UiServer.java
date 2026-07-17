@@ -2517,6 +2517,197 @@ public class UiServer {
         }
     }
 
+    private void populateRepoInfo(Path repoDir, JsonObject obj) {
+        if (repoDir.getFileName().toString().equals(cas.getRootDir().getFileName().toString())) {
+            populateFromActiveDb(obj);
+            return;
+        }
+
+        org.h2.mvstore.MVStore tempStore = null;
+        try {
+            CAS tempCas = new CAS(repoDir);
+            Path dbPath = tempCas.getDraftFlowDir().resolve("index").resolve("index.mv.db");
+            if (Files.exists(dbPath)) {
+                tempStore = new org.h2.mvstore.MVStore.Builder()
+                        .fileName(dbPath.toString())
+                        .compress()
+                        .readOnly()
+                        .open();
+                
+                Map<String, String> configMap = tempStore.openMap("config");
+                Map<String, String> refMap = tempStore.openMap("refs");
+                
+                String activeRev = configMap.get("activeRevisionHash");
+                String lastMsg = "n/a";
+                int totalCommits = 0;
+                int totalBranches = 0;
+                
+                for (String refName : refMap.keySet()) {
+                    if (refName.startsWith("heads/")) {
+                        totalBranches++;
+                    }
+                }
+                if (totalBranches == 0) {
+                    totalBranches = 1;
+                }
+                
+                Queue<String> queue = new LinkedList<>();
+                for (String refVal : refMap.values()) {
+                    if (refVal != null) {
+                        queue.add(refVal);
+                    }
+                }
+                if (activeRev != null) {
+                    queue.add(activeRev);
+                }
+                
+                Set<String> visited = new HashSet<>();
+                Set<String> contributors = new HashSet<>();
+                long latestTimestamp = -1;
+                
+                while (!queue.isEmpty()) {
+                    String curr = queue.poll();
+                    if (curr == null || visited.contains(curr)) {
+                        continue;
+                    }
+                    visited.add(curr);
+                    
+                    try {
+                        Revision rev = (Revision) tempCas.readObject(curr);
+                        if (rev != null) {
+                            totalCommits++;
+                            if (rev.getAuthor() != null) {
+                                contributors.add(rev.getAuthor());
+                            }
+                            if (rev.getTimestamp() > latestTimestamp) {
+                                latestTimestamp = rev.getTimestamp();
+                                lastMsg = rev.getMessage();
+                            }
+                            for (String p : rev.getParentHashes()) {
+                                queue.add(p);
+                            }
+                        }
+                    } catch (Exception ignored) {}
+                }
+                
+                if (lastMsg == null || lastMsg.trim().isEmpty()) {
+                    lastMsg = "n/a";
+                }
+                
+                obj.addProperty("lastCommitMessage", lastMsg);
+                JsonObject stats = new JsonObject();
+                stats.addProperty("totalCommits", totalCommits);
+                stats.addProperty("totalBranches", totalBranches);
+                stats.addProperty("totalContributors", contributors.isEmpty() ? 1 : contributors.size());
+                obj.add("statistics", stats);
+                
+                if (activeRev != null) {
+                    obj.addProperty("activeRevisionHash", activeRev);
+                }
+            } else {
+                obj.addProperty("lastCommitMessage", "n/a");
+                JsonObject stats = new JsonObject();
+                stats.addProperty("totalCommits", 0);
+                stats.addProperty("totalBranches", 1);
+                stats.addProperty("totalContributors", 1);
+                obj.add("statistics", stats);
+            }
+        } catch (Exception e) {
+            obj.addProperty("lastCommitMessage", "n/a");
+            JsonObject stats = new JsonObject();
+            stats.addProperty("totalCommits", 0);
+            stats.addProperty("totalBranches", 1);
+            stats.addProperty("totalContributors", 1);
+            obj.add("statistics", stats);
+        } finally {
+            if (tempStore != null) {
+                try {
+                    tempStore.close();
+                } catch (Exception ignored) {}
+            }
+        }
+    }
+
+    private void populateFromActiveDb(JsonObject obj) {
+        try {
+            String activeRev = db.getConfig("activeRevisionHash");
+            String lastMsg = "n/a";
+            int totalCommits = 0;
+            int totalBranches = 0;
+            
+            for (String refName : db.getRefNames()) {
+                if (refName.startsWith("heads/")) {
+                    totalBranches++;
+                }
+            }
+            if (totalBranches == 0) {
+                totalBranches = 1;
+            }
+            
+            Queue<String> queue = new LinkedList<>();
+            for (String refName : db.getRefNames()) {
+                String val = db.getRef(refName);
+                if (val != null) {
+                    queue.add(val);
+                }
+            }
+            if (activeRev != null) {
+                queue.add(activeRev);
+            }
+            
+            Set<String> visited = new HashSet<>();
+            Set<String> contributors = new HashSet<>();
+            long latestTimestamp = -1;
+            
+            while (!queue.isEmpty()) {
+                String curr = queue.poll();
+                if (curr == null || visited.contains(curr)) {
+                    continue;
+                }
+                visited.add(curr);
+                
+                try {
+                    Revision rev = (Revision) cas.readObject(curr);
+                    if (rev != null) {
+                        totalCommits++;
+                        if (rev.getAuthor() != null) {
+                            contributors.add(rev.getAuthor());
+                        }
+                        if (rev.getTimestamp() > latestTimestamp) {
+                            latestTimestamp = rev.getTimestamp();
+                            lastMsg = rev.getMessage();
+                        }
+                        for (String p : rev.getParentHashes()) {
+                            queue.add(p);
+                        }
+                    }
+                } catch (Exception ignored) {}
+            }
+            
+            if (lastMsg == null || lastMsg.trim().isEmpty()) {
+                lastMsg = "n/a";
+            }
+            
+            obj.addProperty("lastCommitMessage", lastMsg);
+            JsonObject stats = new JsonObject();
+            stats.addProperty("totalCommits", totalCommits);
+            stats.addProperty("totalBranches", totalBranches);
+            stats.addProperty("totalContributors", contributors.isEmpty() ? 1 : contributors.size());
+            obj.add("statistics", stats);
+            
+            if (activeRev != null) {
+                obj.addProperty("activeRevisionHash", activeRev);
+            }
+        } catch (Exception e) {
+            obj.addProperty("lastCommitMessage", "n/a");
+            JsonObject stats = new JsonObject();
+            stats.addProperty("totalCommits", 0);
+            stats.addProperty("totalBranches", 1);
+            stats.addProperty("totalContributors", 1);
+            obj.add("statistics", stats);
+        }
+    }
+
     private class RepositoriesHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
@@ -2545,11 +2736,7 @@ public class UiServer {
                                 obj.addProperty("description", "VCS repository.");
                                 obj.addProperty("defaultBranch", "main");
                                 obj.addProperty("updatedAt", "recently");
-                                JsonObject stats = new JsonObject();
-                                stats.addProperty("totalCommits", 0);
-                                stats.addProperty("totalBranches", 1);
-                                stats.addProperty("totalContributors", 1);
-                                obj.add("statistics", stats);
+                                populateRepoInfo(p, obj);
                                 list.add(obj);
                             }
                         });
@@ -2564,11 +2751,7 @@ public class UiServer {
                     obj.addProperty("description", "VCS repository.");
                     obj.addProperty("defaultBranch", "main");
                     obj.addProperty("updatedAt", "recently");
-                    JsonObject stats = new JsonObject();
-                    stats.addProperty("totalCommits", 0);
-                    stats.addProperty("totalBranches", 1);
-                    stats.addProperty("totalContributors", 1);
-                    obj.add("statistics", stats);
+                    populateRepoInfo(currentRepoDir, obj);
                     list.add(obj);
                 }
                 sendJsonResponse(exchange, 200, GSON.toJson(list));

@@ -19,8 +19,11 @@ export default function SnapshotExplorerPage() {
       author: commit.author,
       timestamp: commit.timestamp,
       branch: selectedRepo.currentBranch || 'main',
+      treeId: commit.treeHash ? commit.treeHash.slice(0, 8) : 'N/A',
+      createdAt: commit.timestamp ? new Date(commit.timestamp).toLocaleString() : 'N/A',
+      repositoryId: repoId || 'N/A',
     }));
-  }, [selectedRepo]);
+  }, [selectedRepo, repoId]);
 
   const filteredSnapshots = useMemo(() => {
     return snapshots.filter((snapshot) => {

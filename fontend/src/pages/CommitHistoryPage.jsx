@@ -57,7 +57,7 @@ function CommitHistoryPage() {
           </div>
           <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-950/70">
             <p className="text-xs font-semibold uppercase tracking-[0.25em] text-slate-500 dark:text-slate-400">Latest Snapshot</p>
-            <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">{repo.lastCommitMessage || 'n/a'}</p>
+            <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">{commits[0]?.message || repo.lastCommitMessage || 'n/a'}</p>
           </div>
           <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-950/70">
             <p className="text-xs font-semibold uppercase tracking-[0.25em] text-slate-500 dark:text-slate-400">Commit Count</p>
