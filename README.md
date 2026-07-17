@@ -1,216 +1,168 @@
-# DraftFlow VCS: High-Performance Snapshot-based DAG Version Control System
+# DraftFlow VCS
 
-DraftFlow is a high-performance, snapshot-based version control system built on a Directed Acyclic Graph (DAG). Designed to combine the flexibility of Git with modern optimizations, DraftFlow features Content Defined Chunking (FastCDC) for block-level deduplication, ECDSA cryptographic commit signing, concurrent CLI/Web transaction safety, and a fully reactive web dashboard.
+*High‑Performance, snapshot‑based version control system built on a Directed Acyclic Graph (DAG).*  
 
 ---
 
 ## Table of Contents
-1. [Key Features](#key-features)
-2. [System Architecture](#system-architecture)
-3. [Component Breakdown](#component-breakdown)
-4. [Environment Setup & Installation](#environment-setup--installation)
-5. [Command Line (CLI) Reference](#command-line-cli-reference)
-6. [Interactive Web Dashboard](#interactive-web-dashboard)
+
+1. [Overview](#overview)
+2. [Advanced Architecture](#advanced-architecture)
+3. [Interactive Web Dashboard](#interactive-web-dashboard)
+4. [Command‑Line Interface (CLI) Reference](#command‑line-interface-cli-reference)
+5. [Execution Flow Details](#execution-flow-details)
+6. [Hooks & Customisation](#hooks--customisation)
 7. [Standard Workflows & Recipes](#standard-workflows--recipes)
-8. [Hooks & Customization](#hooks--customization)
+8. [Testing & Verification](#testing--verification)
 
 ---
 
-## Key Features
-* **Variable-Size Block Deduplication**: Powered by Content-Defined Chunking (FastCDC) to identify identical byte blocks across different files or revisions, dramatically reducing storage overhead.
-* **Transactional Indexing**: Employs an embedded H2 MVStore database for workspace tracking, reference resolutions, and config configurations, ensuring ACID safety.
-* **Dual CLI-Web Concurrency**: Integrates a request-scoped database connection lifecycle filter (`DatabaseLifecycleFilter`) that dynamically opens and releases database locks per request, preventing cross-process locking conflicts.
-* **Commit Signatures**: Cryptographic commit verification using ECDSA keys.
-* **Hook Trigger System**: Pre-commit and post-commit hook execution engine supporting `.sh` and `.bat` scripts.
-* **Git Compatibility**: Native utilities to import from or export history to a Git repository.
+## Overview
+
+DraftFlow combines the flexibility of Git with modern storage and indexing optimisations.  
+Key differentiators:
+- **Content‑Defined Chunking (FastCDC)** – deduplicates at the block level for large binary files.
+- **ACID‑compliant metadata store** – an embedded H2 MVStore database guarantees transactional consistency.
+- **Zero‑lock concurrency** – the web dashboard and CLI can run side‑by‑side without database lock contention.
+- **Cryptographic commit signing** – optional ECDSA signatures ensure provenance.
+- **Full‑stack UI** – a reactive React dashboard visualises commits, branches, snapshots, merges and line‑by‑line blame.
 
 ---
 
-## System Architecture
+## Advanced Architecture
 
-DraftFlow is architected around a decoupling of the interface layer (CLI & Web UI), the metadata index, and the Content Addressable Storage (CAS) object repository.
+### 1. Object Model & Content‑Addressable Storage (CAS)
+- **Objects** are immutable and identified by a SHA‑256 hash.
+  - `Blob` – raw file content (compressed with zlib).
+  - `ChunkTree` – metadata for files > 1 MiB, pointing to a list of chunk hashes.
+  - `Tree` – directory structure mapping filenames → object hashes.
+  - `Revision` – a snapshot of the repository tree, parent hash list, author, timestamp, optional change‑ID and message.
+- **Storage layout**: objects are stored under `objects/XX/YY…` where `XX` are the first two hex characters of the hash, reducing directory depth and improving lookup speed.
 
-```mermaid
-graph TD
-    CLI[DraftFlow CLI Command Line Interface] -->|invokes| Core[Core Subsystem]
-    GUI[Web Dashboard / React Frontend] -->|REST API Requests /api/*| Server[UiServer - Embedded HTTP Server]
-    Server -->|interacts| Core
-    
-    subgraph Core Subsystem [Core Subsystem]
-        WM[WorkspaceManager] -->|manages| CAS[CAS - Content Addressable Storage]
-        WM -->|manages| DB[H2 MVStore MetadataStore]
-        CAS -->|stores| Obj[Blobs, Trees, Revisions, DeltaBlobs]
-        CDC[FastCDC Chunking] -->|chunking & deduplication| CAS
-        LFS[LFSManager] -->|manages large files| CAS
-        Sig[SignatureHelper] -->|signs/verifies commits| Revision
-    end
+### 2. FastCDC Variable‑Size Chunking
+- FastCDC analyses a sliding window (average 8 KiB, min 4 KiB, max 16 KiB) to locate content‑based boundaries.
+- Identical content yields identical chunk hashes regardless of surrounding file modifications, resulting in high deduplication rates across revisions.
+- Chunk trees are written as a single CAS object referencing the ordered list of chunk hashes and original file size.
 
-    subgraph Merging & Diffing [Merging & Diffing Subsystem]
-        ME[MergeEngine] -->|3-Way Merge| AF[AncestorFinder]
-        ME -->|performs line-level merges| LM[LineMerge]
-        LM -->|Myers Diff| Diff[Diff Engine]
-    end
+### 3. Transactional Index Layer (H2 MVStore)
+| Map | Purpose |
+|---|---|
+| `files` | Tracks workspace files – path, hash, size, last‑modified time, type (`BLOB`, `CHUNK_TREE`, `CONFLICT`). |
+| `refs` | Branch and tag references (e.g. `heads/main → <hash>`). |
+| `config` | Repository configuration – author name/email, activeChangeId, activeRevisionHash, activeHead, etc. |
+| `changeRevisions` | Maps change‑IDs to the latest permanent revision hash for quick lookup. |
 
-    subgraph Operations & Logs [Operations Subsystem]
-        Hook[HooksManager] -->|pre-commit, post-commit hooks| WM
-        Reflog[ReflogManager] -->|transaction ledger / reflog| DB
-    end
+All reads/writes are performed inside a short‑lived transaction.  When the HTTP server processes an API request it opens a connection, performs the operation, then releases it – this prevents long‑running locks and allows CLI commands to run concurrently.
 
-    CLI --> Merging & Diffing
-    CLI --> Operations & Logs
-```
-
----
-
-## Component Breakdown
-
-### 1. `com.draftflow.core`
-* **`CAS.java` (Content Addressable Storage)**: Manages directory structures, compresses object payloads with zlib (deflate), and resolves short object hashes.
-* **`WorkspaceManager.java`**: Evaluates workspace file trees, computes modified/deleted files, builds chunk-level commit trees, and stages checkouts.
-* **`FastCDC.java`**: Implements Fast Content-Defined Chunking using a sliding gear hash window to partition files into chunks based on contents rather than fixed sizes.
-* **`LFSManager.java`**: Deducts large binary files from standard VCS indexing and routes them to a dedicated LFS object store.
-
-### 2. `com.draftflow.db`
-* **`MetadataStore.java`**: Implements reference management and tracking index mapping (files, sizes, hashes, conflict markers) powered by H2 MVStore.
-* **`FileMetadata.java`**: Model mapping database state per workspace file path.
-
-### 3. `com.draftflow.merge`
-* **`MergeEngine.java`**: Discovers the Common Ancestor (LCA) using DAG traversal and routes differences.
-* **`LineMerge.java`**: Executes line-level diff3 merges, inserting conflict markers (`<<<<<<< OURS`, `=======`, `>>>>>>> THEIRS`) when overlapping modifications cannot be auto-merged.
-
-### 4. `com.draftflow.ui`
-* **`UiServer.java`**: Spawns an embedded HTTP server (JDK HttpServer) serving static dashboard resources and hosting REST API routing to bridge frontend controls.
-
----
-
-## Environment Setup & Installation
-
-### Prerequisites
-* **Java Development Kit (JDK) 17 or higher**
-* **Node.js 18+ & npm** (for UI styling/frontend compilation)
-
-### Building the Project
-DraftFlow uses Gradle/local paths for compiling. You can build the backend classes with:
-```powershell
-# Get all source files and compile to target/classes
-$javaFiles = Get-ChildItem -Path src/main/java -Filter *.java -Recurse | ForEach-Object { $_.FullName }
-javac -cp "path/to/gson.jar;path/to/picocli.jar;path/to/h2.jar" -d target/classes $javaFiles
-```
-
-### Compiling the Frontend Dashboard
-If you make changes to the React frontend UI, compile the bundle so the backend embedded server picks it up:
-```bash
-cd fontend
-npm install
-npm run build
-```
-*Note: The built assets are compiled directly into `src/main/resources/web` for packaging.*
-
----
-
-## Command Line (CLI) Reference
-
-The main entry point is `com.draftflow.DraftFlow`. Specify the classpath pointing to class output and libraries:
-```powershell
-java -cp "target/classes;libs/*" com.draftflow.DraftFlow [command] [options]
-```
-
-### 1. Repository Initializing & Status
-* **`setup`**
-  * *Use*: Initialize a new DraftFlow repository.
-  * *Syntax*: `draftflow setup`
-* **`status`**
-  * *Use*: Show modified, deleted, conflict-marked, and untracked changes in the working directory.
-  * *Syntax*: `draftflow status`
-
-### 2. Snapshot & Commit Management
-* **`save`**
-  * *Use*: Commit staged workspace modifications as a permanent snapshot revision.
-  * *Syntax*: `draftflow save -m "Commit message" [-p]`
-  * *Options*:
-    * `-m, --message`: Description of the snapshot (Required).
-    * `-p, --patch`: Interactive patching mode.
-* **`undo`**
-  * *Use*: Rollback the latest commit or discard working tree modifications.
-  * *Syntax*: `draftflow undo`
-
-### 3. Branches & DAG Traversal
-* **`branch`**
-  * *Use*: Manage branches.
-  * *Syntax*: `draftflow branch [-c <name>] [-d <name>]`
-  * *Options*:
-    * `-c, --create <name>`: Create a branch.
-    * `-d, --delete <name>`: Delete a branch.
-    * *No Options*: Lists all available branches.
-* **`switch`**
-  * *Use*: Check out a specific revision hash or switch active branch.
-  * *Syntax*: `draftflow switch <ref_or_hash>`
-* **`history`**
-  * *Use*: Print visual text commit graph showing revision parents and author messages.
-  * *Syntax*: `draftflow history`
-
-### 4. Merging & Conflict Resolution
-* **`merge`**
-  * *Use*: Merge target branch or revision hash into the current active branch.
-  * *Syntax*: `draftflow merge <target_branch_or_hash>`
-* **`resolve`**
-  * *Use*: Mark conflict files as resolved after manual remediation.
-  * *Syntax*: `draftflow resolve <file_path>`
-
-### 5. Remote Syncing
-* **`upload`**
-  * *Use*: Push commits and pack objects to the remote server.
-  * *Syntax*: `draftflow upload <remote_url>`
-* **`download`**
-  * *Use*: Fetch revisions and objects from the remote repository.
-  * *Syntax*: `draftflow download <remote_url>`
-
-### 6. Interactive Stashing & Rebasing
-* **`stash`**
-  * *Use*: Save workspace changes to a temporary stack to clean the tree.
-  * *Syntax*: `draftflow stash [--push] [--list] [--pop]`
-* **`rebase`**
-  * *Use*: Reapply current branch modifications on top of an upstream branch.
-  * *Syntax*: `draftflow rebase <upstream_branch_or_hash> [-i]`
-* **`cherry-pick`**
-  * *Use*: Apply commits from an arbitrary revision onto the current branch.
-  * *Syntax*: `draftflow cherry-pick <revision_hash>`
-
-### 7. Diagnostics, Verification & Cleanups
-* **`verify`**
-  * *Use*: Scan database and integrity checksums of CAS object stores, repairing any corruption.
-  * *Syntax*: `draftflow verify`
-* **`prune`**
-  * *Use*: Perform garbage collection, removing unreachable loose objects.
-  * *Syntax*: `draftflow prune`
-* **`clean`**
-  * *Use*: Clear untracked files from the workspace directory.
-  * *Syntax*: `draftflow clean [-d] [-f] [-x]`
-  * *Options*:
-    * `-d`: Delete directories.
-    * `-f, --force`: Force deletions.
-    * `-x`: Remove ignored patterns.
-
-### 8. Audit & History Tracing
-* **`ledger`**
-  * *Use*: Show transaction history log (reflog) of local operations.
-  * *Syntax*: `draftflow ledger`
-* **`trace`**
-  * *Use*: Annotate lines of a file showing revision history contribution (blame).
-  * *Syntax*: `draftflow trace <file_path>`
+### 4. Zero‑Lock Concurrency Architecture
+- **DatabaseLifecycleFilter** (in the backend) opens a transaction per request and closes it automatically.
+- The CLI executes its own short‑lived transaction via `runLockedCommand`.
+- Because each transaction is brief and isolated, the UI can poll status or issue actions while the user runs `draftflow` commands in a terminal without encountering “database locked” errors.
 
 ---
 
 ## Interactive Web Dashboard
 
-To launch the GUI, execute:
 ```powershell
-java -cp "target/classes;libs/*" com.draftflow.DraftFlow dashboard
+# Launch the embedded UI server
+java -cp "target/classes;libs/*" com.draftflow.DraftFlow dashboard -p 8085
 ```
-This launches an embedded HTTP service hosting:
-* **Port**: `http://localhost:8080`
-* **State Updates**: Auto-polls status information and executes commands (switch, merge, stash, pull requests) by posting to `/api/action`.
-* **State Re-sync**: Employs connection release lifecycle, allowing you to use terminal CLI commands side-by-side without database lock blocking.
+
+- **Port**: `http://localhost:8085`
+- **Live Statistics** – commits, branches, contributors, latest snapshot message, and repository size are computed on‑fly by querying the MVStore index.
+- **Routing** – URL parameters (`/repo/<repoId>/commits`, `/snapshots`, `/trace`) automatically trigger `selectRepository` in `RepoContext.jsx` which uses `useParams` to load the correct repository state.
+- **State Synchronisation** – The dashboard polls `/api/status` and posts actions to `/api/action` (switch, merge, stash, pull‑request). The backend releases its DB connection after each request, guaranteeing the UI never blocks the CLI.
+
+### Mermaid Diagram – Save Commit Lifecycle
+
+```mermaid
+graph TD
+    A[Start: draftflow save] --> B[Run pre‑commit hook]
+    B -->|Success| C[Walk workspace directory]
+    B -->|Failure| Error[Abort Commit]
+    C --> D{Is file ignored?}
+    D -->|Yes| E[Skip file]
+    D -->|No| F{Is file > 1 MiB?}
+    F -->|Yes| G[FastCDC → chunks → write ChunkTree]
+    F -->|No| H[Write whole file as Blob]
+    G --> I[Add ChunkTree object to CAS]
+    H --> J[Add Blob object to CAS]
+    I --> K[Create FileMetadata & update H2 index]
+    J --> K
+    K --> L[Rebuild root Tree hash]
+    L --> M[Create Revision object (signed if key present)]
+    M --> N[Update active branch ref & commit transaction]
+    N --> O[Run post‑commit hook]
+```
+
+---
+
+## Command‑Line Interface (CLI) Reference
+
+| Command | Arguments / Options | Description | Core Internal Action |
+|:---|:---|:---|:---|
+| `setup` | – | Initialise a new DraftFlow repository in the current directory. | Creates `.draftflow` folder, `objects/` store and empty `index.mv.db`. |
+| `status` | – | Show modified, deleted, conflicted, and untracked files. | Compares workspace files with `files` map in MVStore. |
+| `save` | `-m, --message <msg>` (required) `-p, --patch` (optional) | Promote current workspace changes to a permanent commit. | Runs pre‑commit hook, indexes files, writes tree/revision objects, updates refs, runs post‑commit hook. |
+| `undo` | – | Revert the latest commit or discard working‑tree modifications. | Moves `activeRevisionHash` back to the parent revision, clears workspace if needed. |
+| `branch` | `-c, --create <name>` – create branch; `-d, --delete <name>` – delete branch; *no options* – list all branches. | Manage branch references. | Manipulates entries in the `refs` map. |
+| `switch` | `<ref_or_hash>` | Checkout another branch or a specific revision. | Resolves target hash, writes its tree to the workspace, updates `activeHead` / `activeRevisionHash`. |
+| `history` | – | Display a textual DAG of revisions. | Traverses parent hashes of each `Revision` object. |
+| `merge` | `<branch_or_hash>` | Merge another branch into the current HEAD. | Finds LCA, performs 3‑way line diff, creates merge `Revision`. |
+| `resolve` | `<file_path>` | Mark a conflicted file as resolved after manual edit. | Clears conflict flag in `files` map. |
+| `stash` | `--push` – push current changes; `--list` – list stashes; `--pop` – apply last stash. | Temporarily store dirty workspace state. | Saves snapshot under a hidden `stash/*` ref. |
+| `rebase` | `<upstream>` `-i` (interactive) | Replay current branch commits on top of another branch. | Sequentially applies patches from the branch onto the upstream tip. |
+| `cherry-pick` | `<revision_hash>` | Apply a specific commit onto the current branch. | Generates a patch from the revision and applies it as a new commit. |
+| `hooks` | – | List, enable, or disable repository hooks. | Scans `.draftflow/hooks/` for executable scripts. |
+| `keys` | – | Generate an ECDSA key‑pair for signing commits. | Stores private key under `.draftflow/keys/`. |
+| `upload` | `<remote_url>` | Push commits and objects to a remote DraftFlow server. | Streams new CAS objects and updates remote refs. |
+| `download` | `<remote_url>` | Pull commits and objects from a remote DraftFlow server. | Retrieves missing objects and updates local refs. |
+| `git-import` | `<git_repo_path>` | Import an existing Git repository into DraftFlow. | Reads Git objects, converts to CAS, populates MVStore. |
+| `git-export` | `<target_path>` | Export DraftFlow history as a Git repository. | Recreates Git tree and commits from DraftFlow objects. |
+| `ledger` | – | Show the reference‑log (reflog) of repository actions. | Queries transaction log tables in MVStore. |
+| `trace` | `<file_path>` | Annotate each line of a file with its last‑changing commit (blame). | Walks the revision DAG backwards to identify line authorship. |
+| `verify` | – | Scan CAS objects and index for integrity, reporting corruption. | Re‑calculates hashes for every object and cross‑checks the database. |
+| `prune` | – | Delete unreachable objects from the CAS store. | Performs a reachability analysis from all branch heads. |
+| `clean` | `-d` (remove dirs) `-f` (force) `-x` (ignore patterns) | Remove untracked files from the workspace. | Deletes files not present in the `files` map. |
+| `config` | `[key] [value]` | Get or set repository configuration values. | Reads/writes the `config` map in MVStore. |
+
+---
+
+## Execution Flow Details
+
+### Stash Flow
+1. **Push** – the current dirty workspace is saved as a new `Revision` (draft) and a reference `stash/<id>` is created.
+2. **List** – reads all `stash/*` refs from the database.
+3. **Pop** – the stash revision is checked out, the reference is removed, and the workspace reflects the saved state.
+
+### Rebase Flow
+1. Resolve the **upstream** tip and the **fork point** (common ancestor).
+2. Compute the list of commits on the current branch after the fork point.
+3. Sequentially **apply** each commit as a patch onto the upstream tip, creating new draft revisions.
+4. If a conflict occurs, the rebase halts, leaving the workspace in a conflicted state for manual resolution.
+
+### Trace / Blame Flow
+1. Load the target file’s current `Tree` entry to obtain its blob hash.
+2. Walk the revision DAG backwards, comparing each revision’s version of the file.
+3. For each line, the first revision that introduced the line is recorded as its author/date.
+4. Output a table of `line → commit → author → date`.
+
+### Git Interoperability Flow
+- **Import** parses Git pack files, reconstructs a DAG of `Commit` objects, converts them to DraftFlow `Revision` objects, writes blobs/trees to the CAS, and creates matching branch refs.
+- **Export** performs the inverse: it walks DraftFlow branches, recreates Git objects, packs them, and writes a standard `.git` directory.
+
+---
+
+## Hooks & Customisation
+
+DraftFlow supports script hooks placed in `.draftflow/hooks/`.  The following hook points are recognised:
+- `pre‑commit` – runs before a `save` operation. Non‑zero exit aborts the commit.
+- `post‑commit` – runs after a successful commit.
+- `pre‑rebase` – runs before a `rebase` starts.
+- `pre‑push` – runs before `upload` transmits data.
+- `post‑checkout` – runs after a branch `switch` completes.
+
+Hooks can be either **shell (`.sh`)** scripts (Unix) or **batch (`.bat`)** scripts (Windows).  They receive the repository root as `$1` (POSIX) or `%1` (Windows) and can access environment variables such as `DF_CHANGE_ID` and `DF_REVISION_HASH`.
 
 ---
 
@@ -218,48 +170,57 @@ This launches an embedded HTTP service hosting:
 
 ### Basic Save Cycle
 ```bash
-# 1. Initialize
-draftflow setup
+# Initialise repository
+ draftflow setup
 
-# 2. Check changes
-draftflow status
+# Check workspace status
+ draftflow status
 
-# 3. Save commit
-draftflow save -m "Initial commit"
+# Commit changes
+ draftflow save -m "Initial commit"
 ```
 
 ### Branching and Merging
 ```bash
-# 1. Create feature branch
-draftflow branch -c feature-oauth
+# Create a feature branch
+ draftflow branch -c feature/oauth
+ draftflow switch feature/oauth
 
-# 2. Switch branch
-draftflow switch feature-oauth
+# Make changes and commit
+ echo "auth code" >> auth.txt
+ draftflow save -m "Add OAuth helper"
 
-# 3. Save changes
-draftflow save -m "Implement authentication"
-
-# 4. Return and merge
-draftflow switch main
-draftflow merge feature-oauth
+# Switch back and merge
+ draftflow switch main
+ draftflow merge feature/oauth
 ```
 
-### Git Interoperability
+### Stashing Work in Progress
 ```bash
-# Import full git revision graph into DraftFlow
-draftflow git-import C:/projects/my-git-repo
+# Save dirty work without a commit
+ draftflow stash --push
 
-# Export DraftFlow repository snapshots to Git
-draftflow git-export C:/projects/exported-git-repo
+# Work on a different task, then restore
+ draftflow stash --pop
 ```
+
+### Rebase Example (interactive)
+```bash
+ draftflow rebase main -i
+```
+The interactive mode opens an editor with the list of commits to be replayed, allowing you to reorder, squash or edit them.
 
 ---
 
-## Hooks & Customization
+## Testing & Verification
 
-DraftFlow includes script hook trigger points configured in `.draftflow/hooks/`.
-* **`pre-commit`**: Executed before saving commits. Returning a non-zero exit status aborts compilation.
-* **`post-commit`**: Executed after saving commits completes.
-* **`pre-rebase`**: Runs before rebase operations begin.
-* **`pre-push`**: Runs before upload transmission begins.
-* **`post-checkout`**: Executed after branch switch completes.
+DraftFlow ships with an extensive integration test suite.  To run it:
+```powershell
+# From the project root
+ .\run-vcs-tests.ps1
+```
+The script compiles the backend, creates a temporary workspace, and exercises the full command set (setup, save, branch, merge, rebase, git‑import/export, hooks, garbage collection, etc.).  All tests must pass before a release.
+
+---
+
+*This README is generated from a structured plan and aims to provide developers with a clear, semi‑technical overview of DraftFlow’s design, usage, and internals.*
