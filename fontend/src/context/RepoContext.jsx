@@ -51,10 +51,12 @@ export function RepoProvider({ children }) {
         branches: statusData.branches || ['main'],
         commits: dagData.map(c => ({
           id: c.hash,
+          commitId: c.hash,
           message: c.message,
           author: c.author,
           timestamp: c.timestamp,
           parents: c.parents,
+          parentCommitIds: c.parents,
         })),
         files: (() => {
           const fileMap = new Map();

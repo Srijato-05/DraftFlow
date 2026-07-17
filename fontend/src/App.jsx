@@ -250,7 +250,7 @@ function AppLayout({ user, onLogout, theme, onThemeChange, children }) {
                   <LayoutDashboard size={16} />
                   Menu
                 </button>
-                <div className="hidden rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-400 sm:flex">
+                <div className="hidden rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-400 sm:flex max-w-xs truncate">
                   <span className="mr-2 text-slate-400">/</span>
                   {breadcrumbs.join(' / ')}
                 </div>

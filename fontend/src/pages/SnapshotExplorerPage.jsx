@@ -54,29 +54,30 @@ export default function SnapshotExplorerPage() {
 
       {/* Summary */}
       <div className="grid gap-4 md:grid-cols-4">
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+        <div className="min-w-0 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
           <p className="text-sm text-slate-500">Repository</p>
-          <h2 className="mt-2 text-lg font-semibold">{repoId}</h2>
+          <h2 className="mt-2 text-lg font-semibold truncate">{repoId}</h2>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+        <div className="min-w-0 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
           <p className="text-sm text-slate-500">Snapshots</p>
           <h2 className="mt-2 text-lg font-semibold">
             {filteredSnapshots.length}
           </h2>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+        <div className="min-w-0 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
           <p className="text-sm text-slate-500">Current Branch</p>
-          <h2 className="mt-2 text-lg font-semibold">
+          <h2 className="mt-2 text-lg font-semibold truncate">
             {latestSnapshot?.branch ?? "main"}
           </h2>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+        <div className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
           <p className="text-sm text-slate-500">Latest Snapshot</p>
-          <h2 className="mt-2 text-lg font-semibold">
-            {latestSnapshot?.snapshotId ?? "N/A"}
+          <p className="mt-2 text-xs font-bold uppercase tracking-widest text-cyan-500">HEAD</p>
+          <h2 className="mt-1 font-mono text-lg font-semibold truncate" title={latestSnapshot?.snapshotId}>
+            {latestSnapshot?.snapshotId?.slice(0, 8) ?? "N/A"}
           </h2>
         </div>
       </div>
@@ -102,7 +103,7 @@ export default function SnapshotExplorerPage() {
           <select
             value={branch}
             onChange={(e) => setBranch(e.target.value)}
-            className="bg-transparent outline-none"
+            className="bg-transparent outline-none text-slate-900 dark:text-white [&>option]:bg-slate-800 [&>option]:text-white"
           >
             <option value="All Branches">All Branches</option>
             {(Array.isArray(selectedRepo?.branches) ? selectedRepo.branches : Object.keys(selectedRepo?.branches ?? {})).map(b => (

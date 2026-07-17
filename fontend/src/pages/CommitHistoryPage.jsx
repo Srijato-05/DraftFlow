@@ -145,14 +145,14 @@ function CommitHistoryPage() {
             <div className="mt-4 space-y-3">
               {recentCommits.map((commit) => (
                 <button
-                  key={commit.commitId}
+                  key={commit.id}
                   type="button"
-                  onClick={() => navigate(`/repo/${repo.id}/commit/${commit.commitId}`)}
+                  onClick={() => navigate(`/repo/${repo.id}/commit/${commit.id}`)}
                   className="w-full rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3 text-left transition hover:border-cyan-500 hover:bg-white dark:border-slate-800 dark:bg-slate-950/70"
                 >
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-sm font-semibold text-slate-900 dark:text-white">{commit.message}</p>
-                    <span className="text-xs text-slate-500 dark:text-slate-400">{commit.commitId?.slice(0, 6)}</span>
+                    <span className="text-xs text-slate-500 dark:text-slate-400">{commit.id?.slice(0, 8)}</span>
                   </div>
                   <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">{commit.author}</p>
                   <p></p>

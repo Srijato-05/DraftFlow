@@ -119,7 +119,7 @@ export default function RaisePullRequestPage() {
             <select
               value={sourceBranch}
               onChange={(e) => setSourceBranch(e.target.value)}
-              className="w-full rounded-xl border border-slate-300 p-3"
+              className="w-full rounded-xl border border-slate-300 p-3 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
             >
               {branches.map(b => (
                 <option key={b} value={b}>{b}</option>
@@ -135,7 +135,7 @@ export default function RaisePullRequestPage() {
             <select
               value={targetBranch}
               onChange={(e) => setTargetBranch(e.target.value)}
-              className="w-full rounded-xl border border-slate-300 p-3"
+              className="w-full rounded-xl border border-slate-300 p-3 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
             >
               {branches.map(b => (
                 <option key={b} value={b}>{b}</option>

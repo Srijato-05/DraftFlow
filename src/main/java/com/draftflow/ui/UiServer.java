@@ -356,9 +356,10 @@ public class UiServer {
                 branches.add(name.replace("heads/", ""));
             }
         }
-        if (branches.isEmpty()) {
-            branches.add("main");
+        if (branches.contains("main")) {
+            branches.remove("main");
         }
+        branches.add(0, "main");
 
         List<FileMetadata> tracked = db.getAllFiles();
         List<String> trackedPaths = new ArrayList<>();
@@ -500,7 +501,7 @@ public class UiServer {
                         "\"casObjectCount\":%d,\"trackedCount\":%d,\"totalVirtualSize\":%d," +
                         "\"hashAlgorithm\":\"%s\",\"lfsThresholdBytes\":%d,\"lfsFileCount\":%d," +
                         "\"userProfile\":{\"username\":\"%s\",\"osName\":\"%s\",\"javaVersion\":\"%s\"}}",
-                activeHead != null ? activeHead.replace("heads/", "") : "detached",
+                activeHead != null ? activeHead.replace("heads/", "") : "main",
                 activeRev != null ? activeRev : "",
                 activeChange != null ? activeChange : "",
                 toJsonArray(branches),
@@ -1626,15 +1627,18 @@ public class UiServer {
                     } else {
                         throw new IllegalStateException("Parent directory unavailable for workspace resolution.");
                     }
-                } else if (cmd.equals("switch")) {
+                } else if (cmd.equals("switch") || cmd.equals("checkout")) {
                     String target = params.get("target");
-                    if (target == null) throw new IllegalArgumentException("Missing target parameter");
+                    if (target == null) {
+                        target = params.get("branch");
+                    }
+                    if (target == null) throw new IllegalArgumentException("Missing target or branch parameter");
                     com.draftflow.DraftFlow.SwitchCmd sw = new com.draftflow.DraftFlow.SwitchCmd();
                     java.lang.reflect.Field fRev = sw.getClass().getDeclaredField("revisionHash");
                     fRev.setAccessible(true);
                     fRev.set(sw, target);
                     int res = executeCommandWithDbClosed(sw);
-                    if (res != 0) throw new RuntimeException("Switch returned code: " + res);
+                    if (res != 0) throw new RuntimeException("Switch/Checkout returned code: " + res);
                     message = "Successfully checked out " + target;
                 } else if (cmd.equals("save")) {
                     String msg = params.get("msg");

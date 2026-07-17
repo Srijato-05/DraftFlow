@@ -64,3 +64,13 @@ select {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(148, 163, 184, 0.55);
 }
+
+/* Dark mode select/option fix */
+.dark select option {
+  background-color: #1e293b;
+  color: #f1f5f9;
+}
+
+.dark select {
+  color-scheme: dark;
+}

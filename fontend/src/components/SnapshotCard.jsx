@@ -21,13 +21,13 @@ export default function SnapshotCard({ snapshot }) {
 
           <div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 min-w-0">
               <FolderGit2
-                className="text-cyan-500"
+                className="text-cyan-500 shrink-0"
                 size={22}
               />
 
-              <h2 className="text-xl font-semibold">
+              <h2 className="text-xl font-semibold truncate" title={snapshot.snapshotId}>
                 {snapshot.snapshotId}
               </h2>
             </div>
@@ -47,7 +47,7 @@ export default function SnapshotCard({ snapshot }) {
         {/* Information */}
         <div className="mt-6 grid gap-5 md:grid-cols-4">
 
-          <div>
+          <div className="min-w-0">
             <div className="flex items-center gap-2">
               <GitCommit size={16} />
               <span className="text-sm text-slate-500">
@@ -55,7 +55,7 @@ export default function SnapshotCard({ snapshot }) {
               </span>
             </div>
 
-            <p className="mt-1 font-medium">
+            <p className="mt-1 font-mono text-sm font-medium truncate" title={snapshot.commitId}>
               {snapshot.commitId}
             </p>
           </div>
