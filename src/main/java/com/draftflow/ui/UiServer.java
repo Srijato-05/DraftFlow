@@ -57,6 +57,36 @@ public class UiServer {
         context.getFilters().add(new DatabaseLifecycleFilter());
     }
 
+    private void sendErrorResponse(HttpExchange exchange, int statusCode, Exception ex) throws IOException {
+        com.draftflow.core.DiagnosticEngine.handleException(ex, cas.getRootDir());
+        
+        JsonObject errorEnv = new JsonObject();
+        errorEnv.addProperty("success", false);
+        
+        if (ex instanceof com.draftflow.core.DraftFlowException) {
+            com.draftflow.core.DraftFlowException dfe = (com.draftflow.core.DraftFlowException) ex;
+            errorEnv.addProperty("errorCode", dfe.getErrorCode());
+            errorEnv.addProperty("message", dfe.getMessage());
+            JsonArray suggestions = new JsonArray();
+            for (String suggestion : dfe.getSuggestions()) {
+                suggestions.add(suggestion);
+            }
+            errorEnv.add("suggestions", suggestions);
+        } else {
+            errorEnv.addProperty("errorCode", "INTERNAL_ERROR");
+            errorEnv.addProperty("message", ex.getMessage() != null ? ex.getMessage() : ex.toString());
+            errorEnv.add("suggestions", new JsonArray());
+        }
+
+        byte[] responseBytes = GSON.toJson(errorEnv).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("Content-Type", "application/json");
+        exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+        exchange.sendResponseHeaders(statusCode, responseBytes.length);
+        try (java.io.OutputStream os = exchange.getResponseBody()) {
+            os.write(responseBytes);
+        }
+    }
+
     private class DatabaseLifecycleFilter extends com.sun.net.httpserver.Filter {
         @Override
         public String description() {
@@ -67,10 +97,18 @@ public class UiServer {
         public void doFilter(HttpExchange exchange, Chain chain) throws IOException {
             synchronized (UiServer.this) {
                 Path dbPath = cas.getDraftFlowDir().resolve("index").resolve("index.mv.db");
-                db = new MetadataStore(dbPath);
-                db.open();
+                try {
+                    db = new MetadataStore(dbPath);
+                    db.open();
+                } catch (Exception e) {
+                    sendErrorResponse(exchange, 503, e);
+                    db = null;
+                    return;
+                }
                 try {
                     chain.doFilter(exchange);
+                } catch (Exception e) {
+                    sendErrorResponse(exchange, 500, e);
                 } finally {
                     try {
                         db.close();
@@ -230,13 +268,7 @@ public class UiServer {
                     os.write(response);
                 }
             } catch (Exception e) {
-                e.printStackTrace();
-                byte[] response = ("{\"error\": \"" + e.getMessage() + "\"}").getBytes(StandardCharsets.UTF_8);
-                exchange.getResponseHeaders().set("Content-Type", "application/json");
-                exchange.sendResponseHeaders(500, response.length);
-                try (OutputStream os = exchange.getResponseBody()) {
-                    os.write(response);
-                }
+                throw new IOException(e);
             }
         }
     }
@@ -253,12 +285,7 @@ public class UiServer {
                     os.write(response);
                 }
             } catch (Exception e) {
-                byte[] response = ("{\"error\": \"" + e.getMessage() + "\"}").getBytes(StandardCharsets.UTF_8);
-                exchange.getResponseHeaders().set("Content-Type", "application/json");
-                exchange.sendResponseHeaders(500, response.length);
-                try (OutputStream os = exchange.getResponseBody()) {
-                    os.write(response);
-                }
+                throw new IOException(e);
             }
         }
     }
@@ -1499,12 +1526,7 @@ public class UiServer {
                     os.write(response);
                 }
             } catch (Exception e) {
-                byte[] response = ("{\"error\": \"" + e.getMessage() + "\"}").getBytes(StandardCharsets.UTF_8);
-                exchange.getResponseHeaders().set("Content-Type", "application/json");
-                exchange.sendResponseHeaders(500, response.length);
-                try (OutputStream os = exchange.getResponseBody()) {
-                    os.write(response);
-                }
+                throw new IOException(e);
             }
         }
     }
@@ -1594,13 +1616,7 @@ public class UiServer {
                     os.write(response);
                 }
             } catch (Exception e) {
-                e.printStackTrace();
-                byte[] response = ("{\"error\": \"" + e.getMessage() + "\"}").getBytes(StandardCharsets.UTF_8);
-                exchange.getResponseHeaders().set("Content-Type", "application/json");
-                exchange.sendResponseHeaders(500, response.length);
-                try (OutputStream os = exchange.getResponseBody()) {
-                    os.write(response);
-                }
+                throw new IOException(e);
             }
         }
     }
@@ -1894,13 +1910,7 @@ public class UiServer {
                     os.write(response);
                 }
             } catch (Exception e) {
-                e.printStackTrace();
-                byte[] response = ("{\"error\": \"" + e.getMessage() + "\"}").getBytes(StandardCharsets.UTF_8);
-                exchange.getResponseHeaders().set("Content-Type", "application/json");
-                exchange.sendResponseHeaders(500, response.length);
-                try (OutputStream os = exchange.getResponseBody()) {
-                    os.write(response);
-                }
+                throw new IOException(e);
             }
         }
 
@@ -1976,13 +1986,7 @@ public class UiServer {
                     os.write(response);
                 }
             } catch (Exception e) {
-                e.printStackTrace();
-                byte[] response = ("{\"error\": \"" + e.getMessage() + "\"}").getBytes(StandardCharsets.UTF_8);
-                exchange.getResponseHeaders().set("Content-Type", "application/json");
-                exchange.sendResponseHeaders(500, response.length);
-                try (OutputStream os = exchange.getResponseBody()) {
-                    os.write(response);
-                }
+                throw new IOException(e);
             }
         }
 
@@ -2049,12 +2053,7 @@ public class UiServer {
                     os.write(response);
                 }
             } catch (Exception e) {
-                byte[] response = ("{\"error\": \"" + e.getMessage() + "\"}").getBytes(StandardCharsets.UTF_8);
-                exchange.getResponseHeaders().set("Content-Type", "application/json");
-                exchange.sendResponseHeaders(500, response.length);
-                try (OutputStream os = exchange.getResponseBody()) {
-                    os.write(response);
-                }
+                throw new IOException(e);
             }
         }
 
@@ -3224,17 +3223,21 @@ public class UiServer {
                     }
                 } else if (exchange.getRequestMethod().equalsIgnoreCase("PUT")) {
                     Files.createDirectories(packPath.getParent());
+                    Path stagingPath = cas.getDraftFlowDir().resolve("packs").resolve(packId + ".staging");
+                    
                     byte[] packData = exchange.getRequestBody().readAllBytes();
-                    Files.write(packPath, packData);
+                    Files.write(stagingPath, packData);
 
-                    // Unpack objects into CAS
                     try (ByteArrayInputStream in = new ByteArrayInputStream(packData)) {
                         com.draftflow.remote.Packer.unpack(in, cas);
-                        System.out.println("[RemotePacksHandler] Automatically unpacked pack " + packId + " into server CAS.");
+                        Files.move(stagingPath, packPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                        System.out.println("[RemotePacksHandler] Successfully verified and unpacked staged pack " + packId + " into server CAS.");
+                        exchange.sendResponseHeaders(200, -1);
                     } catch (Exception e) {
-                        System.err.println("[RemotePacksHandler] Failed to automatically unpack pack: " + e.getMessage());
+                        Files.deleteIfExists(stagingPath);
+                        System.err.println("[RemotePacksHandler] Staged pack failed validation: " + e.getMessage());
+                        sendJsonResponse(exchange, 400, "{\"error\":\"pack_corrupted\",\"message\":\"The uploaded pack file is corrupted or incomplete: " + e.getMessage() + "\"}");
                     }
-                    exchange.sendResponseHeaders(200, -1);
                 } else {
                     exchange.sendResponseHeaders(405, -1);
                 }

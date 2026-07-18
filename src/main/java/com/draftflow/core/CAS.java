@@ -83,7 +83,8 @@ public class CAS {
     public DraftFlowObject readObject(String hash) throws IOException {
         Path objectPath = getObjectPath(hash);
         if (!Files.exists(objectPath)) {
-            throw new IOException("Object not found: " + hash);
+            throw new CASCorruptException("Object not found: " + hash, 
+                List.of("Run 'draftflow verify' to check repository health.", "Try performing a remote pull to restore missing objects."));
         }
 
         byte[] compressed = Files.readAllBytes(objectPath);
@@ -91,13 +92,15 @@ public class CAS {
         try {
             decompressed = Compressor.decompress(compressed);
         } catch (Exception e) {
-            throw new IOException("Decompression failed for: " + hash, e);
+            throw new CASCorruptException("Decompression failed for: " + hash, 
+                List.of("The compressed object file may have zlib header corruption.", "Run 'draftflow verify --repair' to prune corrupt objects."), e);
         }
 
         // SHA-256 post-read integrity check
         String recalculated = Hasher.hash(decompressed);
         if (!recalculated.equals(hash)) {
-            throw new IOException("CAS data corruption detected: expected hash " + hash + " but calculated " + recalculated);
+            throw new CASCorruptException("CAS data corruption detected: expected hash " + hash + " but calculated " + recalculated,
+                List.of("The object payload does not match its SHA-256 identifier.", "Run 'draftflow verify --repair' to repair local cache."));
         }
 
         // Parse header: "[type] [size]\0[payload]"
@@ -115,7 +118,8 @@ public class CAS {
         }
 
         if (spaceIndex == -1 || nullIndex == -1) {
-            throw new IOException("Corrupt object header for: " + hash);
+            throw new CASCorruptException("Corrupt object header for: " + hash,
+                List.of("The object header structure is invalid. Please run 'draftflow verify --repair'."));
         }
 
         String typeStr = new String(Arrays.copyOfRange(decompressed, 0, spaceIndex)).toUpperCase();
@@ -219,7 +223,8 @@ public class CAS {
 
     public void acquireLock() throws IOException {
         if (!tryAcquireLock(5000)) {
-            throw new IOException("Another DraftFlow process is holding the workspace lock. Please wait or release any hanging commands.");
+            throw new LockContentionException("Another DraftFlow process is holding the workspace lock. Please wait or release any hanging commands.",
+                List.of("Close any active terminal command running DraftFlow.", "If the web dashboard server is running, close or pause it."));
         }
     }
 

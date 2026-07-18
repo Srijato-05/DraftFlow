@@ -295,11 +295,25 @@ function ConflictResolver({
             />
           </div>
 
-          <div className="flex justify-end">
+          { (mergedText.includes('<<<<<<<') || mergedText.includes('=======') || mergedText.includes('>>>>>>>')) && (
+            <div className="mt-2 rounded-xl bg-amber-500/10 border border-amber-500/20 p-3 text-xs text-amber-500 flex items-center gap-2">
+              <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <span>Please resolve all conflict markers (e.g. <code>&lt;&lt;&lt;&lt;&lt;&lt;&lt;</code>, <code>=======</code>, <code>&gt;&gt;&gt;&gt;&gt;&gt;&gt;</code>) before saving.</span>
+            </div>
+          )}
+
+          <div className="flex justify-end mt-4">
             <button
               type="button"
               onClick={handleCustomSave}
-              className="rounded-xl bg-cyan-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-cyan-700 dark:bg-cyan-500 dark:text-slate-950 dark:hover:bg-cyan-400"
+              disabled={mergedText.includes('<<<<<<<') || mergedText.includes('=======') || mergedText.includes('>>>>>>>')}
+              className={`rounded-xl px-5 py-2.5 text-sm font-semibold transition ${
+                (mergedText.includes('<<<<<<<') || mergedText.includes('=======') || mergedText.includes('>>>>>>>'))
+                  ? 'bg-slate-200 text-slate-400 dark:bg-slate-800 dark:text-slate-500 cursor-not-allowed'
+                  : 'bg-cyan-600 text-white hover:bg-cyan-700 dark:bg-cyan-500 dark:text-slate-950 dark:hover:bg-cyan-400'
+              }`}
             >
               Save & Resolve Conflict
             </button>

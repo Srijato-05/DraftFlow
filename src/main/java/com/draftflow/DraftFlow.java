@@ -65,7 +65,8 @@ import java.util.concurrent.Callable;
                 DraftFlow.GitImportCmd.class,
                 DraftFlow.GitExportCmd.class,
                 DraftFlow.HooksCmd.class,
-                DraftFlow.ConfigCmd.class
+                DraftFlow.ConfigCmd.class,
+                DraftFlow.RebuildIndexCmd.class
         })
 public class DraftFlow implements Callable<Integer> {
 
@@ -101,28 +102,8 @@ public class DraftFlow implements Callable<Integer> {
     public static class DraftFlowExecutionExceptionHandler implements CommandLine.IExecutionExceptionHandler {
         @Override
         public int handleExecutionException(Exception ex, CommandLine commandLine, CommandLine.ParseResult parseResult) {
-            System.err.println("================================================================================");
-            System.err.println("                     DRAFTFLOW VCS CRITICAL EXCEPTION");
-            System.err.println("================================================================================");
-            System.err.println("Operation failed due to an unexpected error.");
-            System.err.println("Error Type: " + ex.getClass().getName());
-            System.err.println("Message:    " + (ex.getMessage() != null ? ex.getMessage() : ""));
-            System.err.println();
-            System.err.println("Diagnostics & Troubleshooting Tips:");
-            if (ex instanceof java.io.FileNotFoundException || (ex.getMessage() != null && (ex.getMessage().contains("Access is denied") || ex.getMessage().contains("Permission")))) {
-                System.err.println("  -> Permissions Issue: Please verify that you have read/write access to the repository directory.");
-            } else if (ex.getMessage() != null && (ex.getMessage().contains("lock") || ex.getMessage().contains("Lock"))) {
-                System.err.println("  -> Lock Contention: Another process may be running a DraftFlow operation. Please wait for it to complete.");
-            } else if (ex.getMessage() != null && (ex.getMessage().contains("corrupted") || ex.getMessage().contains("corruption"))) {
-                System.err.println("  -> Data Corruption: A stored object failed checksum verification. Run 'draftflow verify' to verify and heal.");
-            } else {
-                System.err.println("  -> System State: Ensure you have enough disk space and that no other application is locking the database files.");
-            }
-            System.err.println();
-            System.err.println("System Information:");
-            System.err.println("  OS:           " + System.getProperty("os.name") + " (" + System.getProperty("os.version") + ")");
-            System.err.println("  Java Version: " + System.getProperty("java.version"));
-            System.err.println("================================================================================");
+            Path currentDir = getCurrentDir();
+            com.draftflow.core.DiagnosticEngine.handleException(ex, currentDir);
             
             if ("true".equalsIgnoreCase(System.getenv("DRAFTFLOW_DEBUG")) || "true".equalsIgnoreCase(System.getProperty("DRAFTFLOW_DEBUG"))) {
                 ex.printStackTrace();
@@ -1480,6 +1461,9 @@ public class DraftFlow implements Callable<Integer> {
 
     @Command(name = "verify", description = "Verify CAS objects and index integrity, prune orphaned entries")
     public static class VerifyCmd implements Callable<Integer> {
+        @Option(names = {"--repair"}, description = "Automatically repair references by rolling back to the last known completely valid commit")
+        private boolean repair;
+
         @Override
         public Integer call() throws Exception {
             Path currentDir = getCurrentDir();
@@ -1515,7 +1499,9 @@ public class DraftFlow implements Callable<Integer> {
                                         validObjects.add(hash);
                                     } catch (Exception e) {
                                         corruptedObjects.add(hash);
-                                        Files.deleteIfExists(objPath);
+                                        if (repair) {
+                                            Files.deleteIfExists(objPath);
+                                        }
                                     }
                                 }
                             }
@@ -1524,23 +1510,64 @@ public class DraftFlow implements Callable<Integer> {
                     
                     System.out.println("Checked " + (validObjects.size() + corruptedObjects.size()) + " CAS objects.");
                     if (!corruptedObjects.isEmpty()) {
-                        System.err.println("Found and cleared " + corruptedObjects.size() + " corrupted objects: " + corruptedObjects);
+                        System.err.println("Found " + corruptedObjects.size() + " corrupted/unreadable objects: " + corruptedObjects);
+                        if (repair) {
+                            System.out.println("Successfully cleared corrupted object files.");
+                        }
                     } else {
                         System.out.println("All stored CAS objects are healthy.");
                     }
                     
+                    // Clean up files in index database if they reference missing CAS objects
                     List<FileMetadata> trackedFiles = db.getAllFiles();
                     int missingRefs = 0;
+                    int repairCount = 0;
                     for (FileMetadata f : trackedFiles) {
                         String hash = f.getHash();
                         Path objPath = objectsDir.resolve(hash.substring(0, 2)).resolve(hash.substring(2));
                         if (!Files.exists(objPath)) {
                             System.err.println("Warning: Tracked file " + f.getPath() + " references missing CAS object " + hash);
                             missingRefs++;
+                            if (repair) {
+                                System.out.println("Repairing index: Removing tracked file " + f.getPath() + " referencing missing object " + hash);
+                                db.removeFile(f.getPath());
+                                repairCount++;
+                            }
                         }
                     }
-                    if (missingRefs > 0) {
+                    if (repairCount > 0) {
+                        db.commit();
+                        System.out.println("Successfully repaired " + repairCount + " missing file entries in index.");
+                    }
+
+                    if (repair) {
+                        List<String> refs = db.getRefNames();
+                        for (String refName : refs) {
+                            String currentHash = db.getRef(refName);
+                            if (currentHash == null) continue;
+                            
+                            String validCommit = findFirstValidCommit(currentHash, cas);
+                            if (validCommit == null) {
+                                System.err.println("Warning: Branch " + refName + " has no valid commits in its history! Resetting branch pointer.");
+                                db.removeRef(refName);
+                            } else if (!validCommit.equals(currentHash)) {
+                                System.out.println("Repairing branch '" + refName + "': Rolling back pointer from " 
+                                        + currentHash.substring(0, 8) + " to last completely valid commit " 
+                                        + validCommit.substring(0, 8));
+                                db.setRef(refName, validCommit);
+                                
+                                String activeHead = db.getConfig("activeHead");
+                                if (refName.equals(activeHead)) {
+                                    db.setConfig("activeRevisionHash", validCommit);
+                                }
+                            }
+                        }
+                        db.commit();
+                    }
+                    
+                    if (missingRefs > 0 && !repair) {
                         System.err.println("Integrity Check Failed: " + missingRefs + " tracked files are missing their content in the CAS store.");
+                        System.err.println("Run 'draftflow verify --repair' to fix these issues.");
                         return 1;
                     } else {
                         System.out.println("Index matches CAS successfully.");
@@ -1548,6 +1575,274 @@ public class DraftFlow implements Callable<Integer> {
                 }
                 return 0;
             });
+        }
+
+        private static boolean isCommitTreeValid(String commitHash, CAS cas) {
+            try {
+                Revision rev = (Revision) cas.readObject(commitHash);
+                String treeHash = rev.getTreeHash();
+                if (treeHash == null) return false;
+                return isTreeValid(treeHash, cas);
+            } catch (Exception e) {
+                return false;
+            }
+        }
+
+        private static boolean isTreeValid(String treeHash, CAS cas) {
+            try {
+                Tree tree = (Tree) cas.readObject(treeHash);
+                for (TreeEntry entry : tree.getEntries()) {
+                    String hash = entry.getHash();
+                    if (hash == null) return false;
+                    if (entry.getType() == ObjectType.TREE) {
+                        if (!isTreeValid(hash, cas)) return false;
+                    } else {
+                        Path prefixDir = cas.getDraftFlowDir().resolve("objects").resolve(hash.substring(0, 2));
+                        Path objPath = prefixDir.resolve(hash.substring(2));
+                        if (!Files.exists(objPath)) {
+                            return false;
+                        }
+                    }
+                }
+                return true;
+            } catch (Exception e) {
+                return false;
+            }
+        }
+
+        private static String findFirstValidCommit(String startHash, CAS cas) {
+            String curr = startHash;
+            while (curr != null) {
+                if (isCommitTreeValid(curr, cas)) {
+                    return curr;
+                }
+                try {
+                    Revision rev = (Revision) cas.readObject(curr);
+                    List<String> parents = rev.getParentHashes();
+                    if (parents == null || parents.isEmpty()) {
+                        curr = null;
+                    } else {
+                        curr = parents.get(0);
+                    }
+                } catch (Exception e) {
+                    curr = null;
+                }
+            }
+            return null;
+        }
+    }
+
+    @Command(name = "rebuild-index", description = "Reconstruct the H2 index metadata store database from CAS revision tree")
+    public static class RebuildIndexCmd implements Callable<Integer> {
+        private static class RebuildFile {
+            final String path;
+            final String hash;
+            final ObjectType type;
+            final int mode;
+            RebuildFile(String path, String hash, ObjectType type, int mode) {
+                this.path = path;
+                this.hash = hash;
+                this.type = type;
+                this.mode = mode;
+            }
+        }
+
+        @Override
+        public Integer call() throws Exception {
+            Path currentDir = getCurrentDir();
+            CAS cas = new CAS(currentDir);
+            if (!Files.exists(cas.getDraftFlowDir())) {
+                System.err.println("Fatal: Not a draftflow repository.");
+                return 1;
+            }
+
+            return runLockedCommand(cas, () -> {
+                System.out.println("Rebuilding H2 database index store...");
+                Path dbPath = cas.getDraftFlowDir().resolve("index").resolve("index.mv.db");
+                
+                if (Files.exists(dbPath)) {
+                    Path backup = dbPath.resolveSibling("index.mv.db.corrupted_" + System.currentTimeMillis());
+                    try {
+                        Files.move(dbPath, backup, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                        System.out.println("Moved existing index database to: " + backup.getFileName());
+                    } catch (IOException e) {
+                        Files.deleteIfExists(dbPath);
+                        System.out.println("Removed existing locked database file.");
+                    }
+                }
+
+                try (com.draftflow.db.MetadataStore db = new com.draftflow.db.MetadataStore(dbPath)) {
+                    db.open();
+                    
+                    String activeRevision = null;
+                    List<com.draftflow.core.ReflogManager.ReflogEntry> entries = com.draftflow.core.ReflogManager.getReflog(cas.getRootDir());
+                    if (entries != null && !entries.isEmpty()) {
+                        activeRevision = entries.get(entries.size() - 1).getNewHash();
+                        System.out.println("Discovered active revision in reflog: " + activeRevision);
+                    }
+
+                    if (activeRevision == null || activeRevision.equals("0000000000000000000000000000000000000000")) {
+                        System.out.println("Reflog empty/missing. Scanning object store for revisions...");
+                        activeRevision = findLatestRevisionInCas(cas);
+                        if (activeRevision != null) {
+                            System.out.println("Found latest revision in CAS: " + activeRevision);
+                        }
+                    }
+
+                    if (activeRevision == null) {
+                        System.out.println("No revisions found. Repository is empty. Initializing empty main branch.");
+                        db.setConfig("activeHead", "heads/main");
+                        db.commit();
+                        System.out.println("Rebuild complete. Database has been initialized cleanly.");
+                        return 0;
+                    }
+
+                    Revision rev;
+                    try {
+                        rev = (Revision) cas.readObject(activeRevision);
+                    } catch (Exception e) {
+                        System.err.println("Fatal: Active revision " + activeRevision + " is unreadable or corrupted: " + e.getMessage());
+                        return 1;
+                    }
+
+                    String treeHash = rev.getTreeHash();
+                    if (treeHash == null) {
+                        System.err.println("Fatal: Active revision tree hash is null.");
+                        return 1;
+                    }
+
+                    System.out.println("Traversing revision tree: " + treeHash);
+                    List<RebuildFile> filesList = new ArrayList<>();
+                    collectTreeFiles(cas, "", treeHash, filesList);
+
+                    db.clearIndex();
+                    for (RebuildFile rf : filesList) {
+                        Path diskPath = cas.getRootDir().resolve(rf.path);
+                        long size = 0;
+                        long lastModified = 0;
+                        boolean contentMatches = false;
+                        if (Files.exists(diskPath)) {
+                            try {
+                                byte[] fileBytes = Files.readAllBytes(diskPath);
+                                byte[] casBytes = null;
+                                Object obj = cas.readObject(rf.hash);
+                                if (obj instanceof com.draftflow.core.Blob) {
+                                    casBytes = ((com.draftflow.core.Blob) obj).getContent();
+                                } else if (obj instanceof com.draftflow.core.ChunkTree) {
+                                    com.draftflow.core.ChunkTree ct = (com.draftflow.core.ChunkTree) obj;
+                                    ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                                    for (String chunkHash : ct.getChunkHashes()) {
+                                        com.draftflow.core.Blob chunkBlob = (com.draftflow.core.Blob) cas.readObject(chunkHash);
+                                        bos.write(chunkBlob.getContent());
+                                    }
+                                    casBytes = bos.toByteArray();
+                                }
+                                
+                                if (casBytes != null) {
+                                    String contentStr = new String(casBytes, java.nio.charset.StandardCharsets.UTF_8);
+                                    com.draftflow.core.LFSManager.LfsPointer lfsPtr = com.draftflow.core.LFSManager.parsePointer(contentStr);
+                                    if (lfsPtr != null) {
+                                        String diskSha = com.draftflow.core.Hasher.hash(fileBytes);
+                                        if (diskSha.equals(lfsPtr.oid) && fileBytes.length == lfsPtr.size) {
+                                            contentMatches = true;
+                                            size = fileBytes.length;
+                                            lastModified = Files.getLastModifiedTime(diskPath).toMillis();
+                                        }
+                                    } else {
+                                        if (java.util.Arrays.equals(fileBytes, casBytes)) {
+                                            contentMatches = true;
+                                            size = fileBytes.length;
+                                            lastModified = Files.getLastModifiedTime(diskPath).toMillis();
+                                        }
+                                    }
+                                }
+                            } catch (Exception ignored) {}
+                        }
+
+                        if (!contentMatches) {
+                            try {
+                                Object obj = cas.readObject(rf.hash);
+                                if (obj instanceof com.draftflow.core.Blob) {
+                                    byte[] casBytes = ((com.draftflow.core.Blob) obj).getContent();
+                                    String contentStr = new String(casBytes, java.nio.charset.StandardCharsets.UTF_8);
+                                    com.draftflow.core.LFSManager.LfsPointer lfsPtr = com.draftflow.core.LFSManager.parsePointer(contentStr);
+                                    if (lfsPtr != null) {
+                                        size = lfsPtr.size;
+                                    } else {
+                                        size = casBytes.length;
+                                    }
+                                } else if (obj instanceof com.draftflow.core.ChunkTree) {
+                                    size = ((com.draftflow.core.ChunkTree) obj).getTotalSize();
+                                }
+                            } catch (Exception ignored) {}
+                            
+                            if (Files.exists(diskPath)) {
+                                try {
+                                    size = Files.size(diskPath);
+                                } catch (Exception ignored) {}
+                                lastModified = 0;
+                            } else {
+                                lastModified = System.currentTimeMillis();
+                            }
+                        }
+
+                        db.putFile(new com.draftflow.db.FileMetadata(rf.path, size, lastModified, rf.hash, rf.type.name(), rf.mode));
+                    }
+
+                    db.setConfig("activeRevisionHash", activeRevision);
+                    db.setConfig("activeChangeId", rev.getChangeId());
+                    db.setConfig("activeHead", "heads/main");
+                    db.setRef("heads/main", activeRevision);
+                    db.commit();
+
+                    System.out.println("Successfully rebuilt database index! Registered " + filesList.size() + " files.");
+                }
+
+                return 0;
+            });
+        }
+
+        private static void collectTreeFiles(CAS cas, String currentPath, String treeHash, List<RebuildFile> filesList) throws IOException {
+            Tree tree = (Tree) cas.readObject(treeHash);
+            for (TreeEntry entry : tree.getEntries()) {
+                String relPath = currentPath.isEmpty() ? entry.getName() : currentPath + "/" + entry.getName();
+                if (entry.getType() == ObjectType.TREE) {
+                    collectTreeFiles(cas, relPath, entry.getHash(), filesList);
+                } else {
+                    filesList.add(new RebuildFile(relPath, entry.getHash(), entry.getType(), entry.getMode()));
+                }
+            }
+        }
+
+        private static String findLatestRevisionInCas(CAS cas) {
+            Path objDir = cas.getDraftFlowDir().resolve("objects");
+            if (!Files.exists(objDir)) return null;
+
+            String latestHash = null;
+            long latestTime = -1;
+
+            try (java.util.stream.Stream<Path> stream = Files.walk(objDir)) {
+                List<Path> files = stream.filter(Files::isRegularFile).collect(java.util.stream.Collectors.toList());
+                for (Path p : files) {
+                    String sub = p.getParent().getFileName().toString();
+                    String name = p.getFileName().toString();
+                    if (sub.length() == 2 && name.length() == 38) {
+                        String hash = sub + name;
+                        try {
+                            Object obj = cas.readObject(hash);
+                            if (obj instanceof Revision) {
+                                Revision rev = (Revision) obj;
+                                if (rev.getTimestamp() > latestTime) {
+                                    latestTime = rev.getTimestamp();
+                                    latestHash = hash;
+                                }
+                            }
+                        } catch (Exception ignored) {}
+                    }
+                }
+            } catch (Exception ignored) {}
+
+            return latestHash;
         }
     }
 
