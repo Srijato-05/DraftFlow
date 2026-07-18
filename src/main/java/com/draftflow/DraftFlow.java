@@ -1169,37 +1169,178 @@ public class DraftFlow implements Callable<Integer> {
             Path dbPath = cas.getDraftFlowDir().resolve("index").resolve("index.mv.db");
             try (MetadataStore db = new MetadataStore(dbPath)) {
                 db.open();
-                String activeRev = db.getConfig("activeRevisionHash");
-                if (activeRev == null) {
-                    System.out.println("No commits in this branch.");
-                    return 0;
+                
+                List<String> refNames = db.getRefNames();
+                Map<String, List<String>> refMap = new HashMap<>();
+                for (String refName : refNames) {
+                    String hash = db.getRef(refName);
+                    if (hash != null) {
+                        refMap.computeIfAbsent(hash, k -> new ArrayList<>()).add(refName);
+                    }
                 }
+                
+                String activeHead = db.getConfig("activeHead");
+                String activeRevision = db.getConfig("activeRevisionHash");
 
+                Map<String, Revision> allRevisions = new HashMap<>();
                 Queue<String> queue = new LinkedList<>();
-                queue.add(activeRev);
-                Set<String> visited = new HashSet<>();
-
+                
+                for (String hash : refMap.keySet()) {
+                    queue.add(hash);
+                }
+                if (activeRevision != null) {
+                    queue.add(activeRevision);
+                }
+                
                 while (!queue.isEmpty()) {
                     String curr = queue.poll();
-                    if (curr == null || visited.contains(curr)) {
+                    if (curr == null || allRevisions.containsKey(curr)) {
                         continue;
                     }
-                    visited.add(curr);
+                    try {
+                        Revision rev = (Revision) cas.readObject(curr);
+                        allRevisions.put(curr, rev);
+                        queue.addAll(rev.getParentHashes());
+                    } catch (Exception ignored) {}
+                }
+                
+                if (allRevisions.isEmpty()) {
+                    System.out.println("No commits in history.");
+                    return 0;
+                }
+                
+                List<Revision> sortedList = new ArrayList<>(allRevisions.values());
+                sortedList.sort((r1, r2) -> Long.compare(r2.getTimestamp(), r1.getTimestamp()));
 
-                    Revision rev = (Revision) cas.readObject(curr);
-                    String sigStatus = "[UNSIGNED]";
+                List<String> activeColumns = new ArrayList<>();
+                
+                for (Revision rev : sortedList) {
+                    String hash = rev.getHash();
+                    if (!activeColumns.contains(hash)) {
+                        activeColumns.add(hash);
+                    }
+                    int nodeIndex = activeColumns.indexOf(hash);
+                    
+                    // Build the node line with the ANSI colored * and the commit summary
+                    StringBuilder graphPrefix = new StringBuilder();
+                    for (int j = 0; j < activeColumns.size(); j++) {
+                        if (j == nodeIndex) {
+                            graphPrefix.append("\u001B[33m*\u001B[m ");
+                        } else {
+                            graphPrefix.append("| ");
+                        }
+                    }
+                    
+                    // Gather references pointing to this commit
+                    List<String> labels = new ArrayList<>();
+                    List<String> refsAtHash = refMap.get(hash);
+                    if (refsAtHash != null) {
+                        for (String r : refsAtHash) {
+                            String displayName = r;
+                            if (r.startsWith("heads/")) {
+                                displayName = r.substring(6);
+                            }
+                            if (activeHead != null && activeHead.equals(r)) {
+                                labels.add("\u001B[32mHEAD -> " + displayName + "\u001B[m");
+                            } else {
+                                labels.add("\u001B[36m" + displayName + "\u001B[m");
+                            }
+                        }
+                    }
+                    // Handle detached head label if activeRevision is here and no branch matches
+                    if (activeRevision != null && activeRevision.equals(hash)) {
+                        boolean hasHead = false;
+                        for (String l : labels) {
+                            if (l.contains("HEAD")) hasHead = true;
+                        }
+                        if (!hasHead) {
+                            labels.add("\u001B[32mHEAD\u001B[m");
+                        }
+                    }
+                    
+                    String labelStr = "";
+                    if (!labels.isEmpty()) {
+                        labelStr = " (" + String.join(", ", labels) + ")";
+                    }
+                    
+                    String sigStatus = "";
                     if (rev.getSignature() != null && rev.getPublicKey() != null) {
                         boolean verified = SignatureHelper.verify(rev.getSigningData(), rev.getSignature(), rev.getPublicKey());
-                        sigStatus = verified ? "[SIGNED & VERIFIED]" : "[SIGNATURE INVALID]";
+                        sigStatus = verified ? " \u001B[32m[SIGNED]\u001B[m" : " \u001B[31m[BAD SIGNATURE]\u001B[m";
                     }
-                    System.out.println("*  Revision: " + curr.substring(0, 8) + (rev.isDraft() ? " (DRAFT)" : "") + " " + sigStatus);
-                    System.out.println("|  Change ID: " + rev.getChangeId().substring(0, 8));
-                    System.out.println("|  Author: " + rev.getAuthor());
-                    System.out.println("|  Date: " + new java.util.Date(rev.getTimestamp()));
-                    System.out.println("|  Message: " + rev.getMessage());
-                    System.out.println("|");
-
-                    queue.addAll(rev.getParentHashes());
+                    
+                    // Print the node line
+                    System.out.println(graphPrefix + "\u001B[35m" + hash.substring(0, 8) + "\u001B[m" + labelStr + sigStatus + " " + rev.getMessage());
+                    
+                    // Prefix for metadata lines
+                    StringBuilder metaPrefix = new StringBuilder();
+                    for (int j = 0; j < activeColumns.size(); j++) {
+                        metaPrefix.append("| ");
+                    }
+                    
+                    // Print author, date, changeId
+                    System.out.println(metaPrefix + "Author: " + rev.getAuthor());
+                    System.out.println(metaPrefix + "Date:   " + new java.util.Date(rev.getTimestamp()));
+                    System.out.println(metaPrefix + "Change: " + rev.getChangeId().substring(0, 8));
+                    
+                    // Rebuild activeColumns for the next iteration
+                    List<String> parents = rev.getParentHashes();
+                    if (parents.isEmpty()) {
+                        activeColumns.remove(nodeIndex);
+                        if (!activeColumns.isEmpty()) {
+                            StringBuilder shiftPrefix = new StringBuilder();
+                            for (int j = 0; j < activeColumns.size() + 1; j++) {
+                                if (j == nodeIndex) {
+                                    shiftPrefix.append("/ ");
+                                } else if (j > nodeIndex) {
+                                    shiftPrefix.append("\\ ");
+                                } else {
+                                    shiftPrefix.append("| ");
+                                }
+                            }
+                            System.out.println(shiftPrefix);
+                        }
+                    } else if (parents.size() == 1) {
+                        String parent = parents.get(0);
+                        if (activeColumns.contains(parent)) {
+                            activeColumns.remove(nodeIndex);
+                            StringBuilder shiftPrefix = new StringBuilder();
+                            for (int j = 0; j < activeColumns.size() + 1; j++) {
+                                if (j == nodeIndex) {
+                                    shiftPrefix.append("/ ");
+                                } else if (j > nodeIndex) {
+                                    shiftPrefix.append("\\ ");
+                                } else {
+                                    shiftPrefix.append("| ");
+                                }
+                            }
+                            System.out.println(shiftPrefix);
+                        } else {
+                            activeColumns.set(nodeIndex, parent);
+                            System.out.println(metaPrefix);
+                        }
+                    } else { // Merge commit (multiple parents)
+                        activeColumns.set(nodeIndex, parents.get(0));
+                        for (int k = 1; k < parents.size(); k++) {
+                            String extraParent = parents.get(k);
+                            if (!activeColumns.contains(extraParent)) {
+                                activeColumns.add(nodeIndex + k, extraParent);
+                            }
+                        }
+                        StringBuilder splitPrefix = new StringBuilder();
+                        for (int j = 0; j < activeColumns.size(); j++) {
+                            if (j >= nodeIndex && j < nodeIndex + parents.size() - 1) {
+                                if (j == nodeIndex) {
+                                    splitPrefix.append("|\\ ");
+                                } else {
+                                    splitPrefix.append("\\ ");
+                                }
+                            } else {
+                                splitPrefix.append("| ");
+                            }
+                        }
+                        System.out.println(splitPrefix);
+                    }
                 }
             }
             return 0;
@@ -1445,8 +1586,17 @@ public class DraftFlow implements Callable<Integer> {
         }
     }
 
-    @Command(name = "keys", description = "Generate ECDSA keypair for cryptographic commit signing")
+    @Command(name = "keys", description = "Manage cryptographic ECDSA keys for signing and push verification")
     public static class KeysCmd implements Callable<Integer> {
+        @Option(names = {"--add"}, description = "Add a public key to the authorized list for push verification")
+        private String addKey;
+
+        @Option(names = {"--remove"}, description = "Remove a public key from the authorized list")
+        private String removeKey;
+
+        @Option(names = {"--list"}, description = "List all authorized public keys")
+        private boolean listKeys;
+
         @Override
         public Integer call() throws Exception {
             Path currentDir = getCurrentDir();
@@ -1455,6 +1605,69 @@ public class DraftFlow implements Callable<Integer> {
                 System.err.println("Fatal: Not a draftflow repository.");
                 return 1;
             }
+
+            Path dbPath = cas.getDraftFlowDir().resolve("index").resolve("index.mv.db");
+            try (MetadataStore db = new MetadataStore(dbPath)) {
+                db.open();
+
+                if (listKeys) {
+                    String authKeys = db.getConfig("authorized_keys");
+                    if (authKeys == null || authKeys.trim().isEmpty()) {
+                        System.out.println("No public keys are currently authorized.");
+                    } else {
+                        System.out.println("Authorized Public Keys:");
+                        String[] keys = authKeys.split(",");
+                        for (int i = 0; i < keys.length; i++) {
+                            System.out.printf("[%d] %s%n", i + 1, keys[i].trim());
+                        }
+                    }
+                    return 0;
+                }
+
+                if (addKey != null) {
+                    addKey = addKey.trim();
+                    if (addKey.isEmpty()) {
+                        System.err.println("Error: Public key cannot be empty.");
+                        return 1;
+                    }
+                    String authKeys = db.getConfig("authorized_keys");
+                    List<String> list = new ArrayList<>();
+                    if (authKeys != null && !authKeys.trim().isEmpty()) {
+                        for (String k : authKeys.split(",")) {
+                            list.add(k.trim());
+                        }
+                    }
+                    if (list.contains(addKey)) {
+                        System.out.println("Public key is already authorized.");
+                    } else {
+                        list.add(addKey);
+                        db.setConfig("authorized_keys", String.join(",", list));
+                        db.commit();
+                        System.out.println("Successfully added public key to authorized list.");
+                    }
+                    return 0;
+                }
+
+                if (removeKey != null) {
+                    removeKey = removeKey.trim();
+                    String authKeys = db.getConfig("authorized_keys");
+                    List<String> list = new ArrayList<>();
+                    if (authKeys != null && !authKeys.trim().isEmpty()) {
+                        for (String k : authKeys.split(",")) {
+                            list.add(k.trim());
+                        }
+                    }
+                    if (list.remove(removeKey)) {
+                        db.setConfig("authorized_keys", String.join(",", list));
+                        db.commit();
+                        System.out.println("Successfully removed public key from authorized list.");
+                    } else {
+                        System.out.println("Public key was not found in the authorized list.");
+                    }
+                    return 0;
+                }
+            }
+
             Path privPath = cas.getDraftFlowDir().resolve("id_ecdsa");
             Path pubPath = cas.getDraftFlowDir().resolve("id_ecdsa.pub");
 

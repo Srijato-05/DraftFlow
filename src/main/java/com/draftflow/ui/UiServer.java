@@ -27,6 +27,8 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 
 
+import com.draftflow.watcher.FSWatcher;
+
 import java.io.*;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
@@ -41,6 +43,7 @@ public class UiServer {
     private HttpServer server;
     private int port;
     private static final Gson GSON = new Gson();
+    private FSWatcher watcher;
 
 
     public UiServer(CAS cas, MetadataStore db, int port) {
@@ -85,6 +88,9 @@ public class UiServer {
         }
         server = HttpServer.create(new InetSocketAddress(port), 0);
         registerContext("/", new IndexHandler());
+        registerContext("/refs/", new RemoteRefsHandler());
+        registerContext("/packs/", new RemotePacksHandler());
+        registerContext("/pack.index", new RemoteIndexHandler());
         registerContext("/api/dag", new DagHandler());
         registerContext("/api/status", new StatusHandler());
         registerContext("/api/ledger", new LedgerHandler());
@@ -110,9 +116,36 @@ public class UiServer {
         server.start();
         this.port = server.getAddress().getPort();
         System.out.println("DraftFlow UI Server running at: http://localhost:" + this.port);
+
+        // Start File System Watcher to auto-save background draft/shadow commits
+        try {
+            watcher = new FSWatcher(cas.getRootDir(), cas.getConfig(), changedPaths -> {
+                synchronized (UiServer.this) {
+                    Path dbPath = cas.getDraftFlowDir().resolve("index").resolve("index.mv.db");
+                    try (MetadataStore watcherDb = new MetadataStore(dbPath)) {
+                        watcherDb.open();
+                        WorkspaceManager wm = new WorkspaceManager(cas, watcherDb);
+                        wm.scanAndCreateShadowCommit(changedPaths);
+                        watcherDb.commit();
+                        System.out.println("[FSWatcher] Auto-saved shadow revision for: " + changedPaths.size() + " changed files.");
+                    } catch (Exception e) {
+                        System.err.println("[FSWatcher] Failed to auto-save shadow revision: " + e.getMessage());
+                    }
+                }
+            });
+            watcher.start();
+            System.out.println("[FSWatcher] Started monitoring workspace recursively: " + cas.getRootDir());
+        } catch (Exception e) {
+            System.err.println("[FSWatcher] Could not start file system watcher: " + e.getMessage());
+        }
     }
 
     public void stop() {
+        if (watcher != null) {
+            try {
+                watcher.stop();
+            } catch (Exception ignored) {}
+        }
         if (server != null) {
             server.stop(0);
         }
@@ -3071,6 +3104,175 @@ public class UiServer {
                 db.setConfig("author.email", null);
                 db.commit();
                 sendJsonResponse(exchange, 200, "{\"message\":\"Logged out successfully.\"}");
+            } catch (Exception e) {
+                e.printStackTrace();
+                sendJsonResponse(exchange, 500, "{\"error\":\"" + e.getMessage() + "\"}");
+            }
+        }
+    }
+
+    private class RemoteRefsHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            setCorsHeaders(exchange);
+            if (exchange.getRequestMethod().equalsIgnoreCase("OPTIONS")) {
+                exchange.sendResponseHeaders(204, -1);
+                return;
+            }
+            try {
+                String path = exchange.getRequestURI().getPath();
+                String refName = path.substring(path.indexOf("/refs/") + 6);
+                
+                if (exchange.getRequestMethod().equalsIgnoreCase("GET")) {
+                    String hash = db.getRef(refName);
+                    if (hash == null) {
+                        Path refPath = cas.getDraftFlowDir().resolve("refs").resolve(refName);
+                        if (Files.exists(refPath)) {
+                            hash = Files.readString(refPath, StandardCharsets.UTF_8).trim();
+                        }
+                    }
+                    if (hash == null) {
+                        exchange.sendResponseHeaders(404, -1);
+                        return;
+                    }
+                    byte[] response = hash.getBytes(StandardCharsets.UTF_8);
+                    exchange.sendResponseHeaders(200, response.length);
+                    try (OutputStream os = exchange.getResponseBody()) {
+                        os.write(response);
+                    }
+                } else if (exchange.getRequestMethod().equalsIgnoreCase("PUT")) {
+                    String newHash = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8).trim();
+                    
+                    String sig = exchange.getRequestHeaders().getFirst("X-DF-Signature");
+                    String pubKey = exchange.getRequestHeaders().getFirst("X-DF-PublicKey");
+                    
+                    if (sig != null && pubKey != null) {
+                        String payload = refName + ":" + newHash;
+                        boolean valid = SignatureHelper.verify(payload.getBytes(StandardCharsets.UTF_8), sig, pubKey);
+                        if (!valid) {
+                            sendJsonResponse(exchange, 403, "{\"error\":\"Signature verification failed.\"}");
+                            return;
+                        }
+                        
+                        String authorizedKeys = db.getConfig("authorized_keys");
+                        if (authorizedKeys != null && !authorizedKeys.isEmpty()) {
+                            boolean authorized = false;
+                            for (String k : authorizedKeys.split(",")) {
+                                if (k.trim().equals(pubKey.trim())) {
+                                    authorized = true;
+                                    break;
+                                }
+                            }
+                            if (!authorized) {
+                                sendJsonResponse(exchange, 403, "{\"error\":\"Public key not authorized to push to this repository.\"}");
+                                return;
+                            }
+                        } else {
+                            db.setConfig("authorized_keys", pubKey.trim());
+                            db.commit();
+                            System.out.println("[RemoteRefsHandler] TOFU Initialized public key as authorized repository owner.");
+                        }
+                        System.out.println("[RemoteRefsHandler] Cryptographic signature VERIFIED successfully for ref " + refName);
+                    } else {
+                        String authorizedKeys = db.getConfig("authorized_keys");
+                        if (authorizedKeys != null && !authorizedKeys.isEmpty()) {
+                            sendJsonResponse(exchange, 401, "{\"error\":\"Authentication required: Signature missing.\"}");
+                            return;
+                        }
+                    }
+                    
+                    Path refPath = cas.getDraftFlowDir().resolve("refs").resolve(refName);
+                    Files.createDirectories(refPath.getParent());
+                    Files.writeString(refPath, newHash, StandardCharsets.UTF_8);
+                    
+                    db.setRef(refName, newHash);
+                    db.commit();
+                    
+                    exchange.sendResponseHeaders(200, -1);
+                } else {
+                    exchange.sendResponseHeaders(405, -1);
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+                sendJsonResponse(exchange, 500, "{\"error\":\"" + e.getMessage() + "\"}");
+            }
+        }
+    }
+
+    private class RemotePacksHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            setCorsHeaders(exchange);
+            if (exchange.getRequestMethod().equalsIgnoreCase("OPTIONS")) {
+                exchange.sendResponseHeaders(204, -1);
+                return;
+            }
+            try {
+                String path = exchange.getRequestURI().getPath();
+                String packId = path.substring(path.indexOf("/packs/") + 7);
+                Path packPath = cas.getDraftFlowDir().resolve("packs").resolve(packId);
+
+                if (exchange.getRequestMethod().equalsIgnoreCase("GET")) {
+                    if (!Files.exists(packPath)) {
+                        exchange.sendResponseHeaders(404, -1);
+                        return;
+                    }
+                    byte[] packData = Files.readAllBytes(packPath);
+                    exchange.sendResponseHeaders(200, packData.length);
+                    try (OutputStream os = exchange.getResponseBody()) {
+                        os.write(packData);
+                    }
+                } else if (exchange.getRequestMethod().equalsIgnoreCase("PUT")) {
+                    Files.createDirectories(packPath.getParent());
+                    byte[] packData = exchange.getRequestBody().readAllBytes();
+                    Files.write(packPath, packData);
+
+                    // Unpack objects into CAS
+                    try (ByteArrayInputStream in = new ByteArrayInputStream(packData)) {
+                        com.draftflow.remote.Packer.unpack(in, cas);
+                        System.out.println("[RemotePacksHandler] Automatically unpacked pack " + packId + " into server CAS.");
+                    } catch (Exception e) {
+                        System.err.println("[RemotePacksHandler] Failed to automatically unpack pack: " + e.getMessage());
+                    }
+                    exchange.sendResponseHeaders(200, -1);
+                } else {
+                    exchange.sendResponseHeaders(405, -1);
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+                sendJsonResponse(exchange, 500, "{\"error\":\"" + e.getMessage() + "\"}");
+            }
+        }
+    }
+
+    private class RemoteIndexHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            setCorsHeaders(exchange);
+            if (exchange.getRequestMethod().equalsIgnoreCase("OPTIONS")) {
+                exchange.sendResponseHeaders(204, -1);
+                return;
+            }
+            try {
+                Path indexPath = cas.getDraftFlowDir().resolve("pack.index");
+                if (exchange.getRequestMethod().equalsIgnoreCase("GET")) {
+                    if (!Files.exists(indexPath)) {
+                        exchange.sendResponseHeaders(404, -1);
+                        return;
+                    }
+                    byte[] indexData = Files.readAllBytes(indexPath);
+                    exchange.sendResponseHeaders(200, indexData.length);
+                    try (OutputStream os = exchange.getResponseBody()) {
+                        os.write(indexData);
+                    }
+                } else if (exchange.getRequestMethod().equalsIgnoreCase("PUT")) {
+                    Files.createDirectories(indexPath.getParent());
+                    byte[] indexData = exchange.getRequestBody().readAllBytes();
+                    Files.write(indexPath, indexData);
+                    exchange.sendResponseHeaders(200, -1);
+                } else {
+                    exchange.sendResponseHeaders(405, -1);
+                }
             } catch (Exception e) {
                 e.printStackTrace();
                 sendJsonResponse(exchange, 500, "{\"error\":\"" + e.getMessage() + "\"}");

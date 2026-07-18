@@ -117,8 +117,19 @@ public class WorkspaceManager {
                     FileMetadata newMeta = new FileMetadata(relStr, size, lastMod, objectHash, typeStr, mode);
                     db.putFile(newMeta);
                 } else {
-                    // File deleted
-                    db.removeFile(relStr);
+                    // File or directory deleted
+                    if (db.getFile(relStr) != null) {
+                        db.removeFile(relStr);
+                    } else {
+                        // It could be a deleted directory containing tracked files.
+                        // Remove all tracked files in DB whose relative path starts with relStr + "/"
+                        List<FileMetadata> allTracked = db.getAllFiles();
+                        for (FileMetadata fm : allTracked) {
+                            if (fm.getPath().startsWith(relStr + "/")) {
+                                db.removeFile(fm.getPath());
+                            }
+                        }
+                    }
                 }
             } catch (IOException e) {
                 System.err.println("Warning: Could not read file " + relStr + " (" + e.getMessage() + "). Retaining previous index state.");

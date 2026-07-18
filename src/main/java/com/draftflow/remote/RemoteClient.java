@@ -20,6 +20,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -32,10 +33,39 @@ public class RemoteClient {
     private final HttpClient httpClient;
 
     public RemoteClient(String remoteUrl) {
-        this.remoteUrl = remoteUrl.endsWith("/") ? remoteUrl : remoteUrl + "/";
+        String normalized = normalizeUrl(remoteUrl);
+        this.remoteUrl = normalized.endsWith("/") ? normalized : normalized + "/";
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(java.time.Duration.ofSeconds(10))
                 .build();
+    }
+
+    private static String normalizeUrl(String url) {
+        if (url == null) return "";
+        url = url.trim();
+        if (url.startsWith("git@")) {
+            // git@host:path/to/repo.git -> http://host/path/to/repo/
+            String content = url.substring(4).replace(":", "/");
+            if (content.endsWith(".git")) {
+                content = content.substring(0, content.length() - 4);
+            }
+            String mapped = "http://" + content;
+            System.out.println("[RemoteClient] Mapped SSH Git URL '" + url + "' to DraftFlow HTTP remote protocol: " + mapped);
+            return mapped;
+        } else if (url.startsWith("ssh://")) {
+            // ssh://user@host/path/to/repo.git -> http://host/path/to/repo/
+            String content = url.substring(6);
+            if (content.contains("@")) {
+                content = content.substring(content.indexOf("@") + 1);
+            }
+            if (content.endsWith(".git")) {
+                content = content.substring(0, content.length() - 4);
+            }
+            String mapped = "http://" + content;
+            System.out.println("[RemoteClient] Mapped SSH Remote URL '" + url + "' to DraftFlow HTTP remote protocol: " + mapped);
+            return mapped;
+        }
+        return url;
     }
 
     @FunctionalInterface
@@ -100,13 +130,36 @@ public class RemoteClient {
                 throw e;
             }
         } else {
+            // Sign the ref update if ECDSA key pair exists
+            String signature = null;
+            String publicKey = null;
+            try {
+                Path privPath = Paths.get(".draftflow/id_ecdsa");
+                Path pubPath = Paths.get(".draftflow/id_ecdsa.pub");
+                if (Files.exists(privPath) && Files.exists(pubPath)) {
+                    String privKeyStr = Files.readString(privPath, StandardCharsets.UTF_8).trim();
+                    publicKey = Files.readString(pubPath, StandardCharsets.UTF_8).trim();
+                    String payload = refName + ":" + revisionHash;
+                    signature = com.draftflow.core.SignatureHelper.sign(payload.getBytes(StandardCharsets.UTF_8), privKeyStr);
+                }
+            } catch (Exception e) {
+                System.err.println("Warning: Failed to cryptographically sign ref update: " + e.getMessage());
+            }
+
+            final String finalSig = signature;
+            final String finalPub = publicKey;
+
             executeWithRetry(() -> {
                 URI uri = URI.create(remoteUrl + "refs/" + refName);
-                HttpRequest request = HttpRequest.newBuilder()
+                HttpRequest.Builder builder = HttpRequest.newBuilder()
                         .uri(uri)
                         .timeout(java.time.Duration.ofSeconds(10))
-                        .PUT(HttpRequest.BodyPublishers.ofString(revisionHash))
-                        .build();
+                        .PUT(HttpRequest.BodyPublishers.ofString(revisionHash));
+                if (finalSig != null && finalPub != null) {
+                    builder.header("X-DF-Signature", finalSig);
+                    builder.header("X-DF-PublicKey", finalPub);
+                }
+                HttpRequest request = builder.build();
                 HttpResponse<Void> response = httpClient.send(request, HttpResponse.BodyHandlers.discarding());
                 if (response.statusCode() < 200 || response.statusCode() >= 300) {
                     throw new IOException("Failed to update remote ref: HTTP " + response.statusCode());

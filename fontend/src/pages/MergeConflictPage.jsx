@@ -50,11 +50,14 @@ function MergeConflictPage() {
     loadConflicts()
   }, [selectedRepo?.conflicts])
 
-  const handleResolveAction = async (fileName, resolution) => {
+  const handleResolveAction = async (fileName, resolution, customContent = null) => {
     try {
-      const res = await fetch(`/api/action?cmd=resolve&file=${encodeURIComponent(fileName)}&resolution=${resolution}`, {
-        method: "POST"
-      })
+      const url = `/api/action?cmd=resolve&file=${encodeURIComponent(fileName)}&resolution=${resolution}`
+      const options = { method: "POST" }
+      if (resolution === "custom" && customContent !== null) {
+        options.body = customContent
+      }
+      const res = await fetch(url, options)
       if (res.ok) {
         if (selectRepository && selectedRepo) {
           await selectRepository(selectedRepo)
@@ -101,6 +104,7 @@ function MergeConflictPage() {
               onAcceptCurrent={() => handleResolveAction(conflict.fileName, "ours")}
               onAcceptIncoming={() => handleResolveAction(conflict.fileName, "theirs")}
               onResolve={() => handleResolveAction(conflict.fileName, "both")}
+              onCustomResolve={(content) => handleResolveAction(conflict.fileName, "custom", content)}
             />
           ))}
         </div>
